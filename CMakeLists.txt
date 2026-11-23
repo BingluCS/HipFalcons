@@ -1,11 +1,15 @@
 cmake_minimum_required(VERSION 3.18)
 project(HipFalcons LANGUAGES C CXX)
 
-set(FALCONS_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/deps/Falcons" CACHE PATH "CPU Falcons source tree")
+set(FALCONS_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/Falcons" CACHE PATH "CPU Falcons source tree")
+set(FETCHCONTENT_SOURCE_DIR_ZSTDFETCHED "${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd"
+    CACHE PATH "Offline source directory for the bundled Zstd fallback")
 set(DTK_ROOT "/opt/dtk" CACHE PATH "DTK or ROCm installation")
 set(HIP_ARCH "" CACHE STRING "Optional hipcc offload target, e.g. gfx928")
 if(NOT EXISTS "${FALCONS_SOURCE}/include/Falcons/api/falcons.hpp")
-    message(FATAL_ERROR "Falcons source missing at ${FALCONS_SOURCE}; see README.md or set -DFALCONS_SOURCE")
+    message(FATAL_ERROR
+        "Falcons source missing at ${FALCONS_SOURCE}. Use a fresh build directory for bundled dependencies "
+        "or set -DFALCONS_SOURCE to a compatible checkout.")
 endif()
 find_program(HIPCC hipcc HINTS "${DTK_ROOT}/bin" REQUIRED)
 find_library(HIP_RUNTIME amdhip64 HINTS "${DTK_ROOT}/lib" "${DTK_ROOT}/lib64" REQUIRED)

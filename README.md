@@ -12,15 +12,18 @@ slicing.
 
 ## Build
 
-Use Linux, a working HIP/DTK installation, CMake 3.18+, a C++17 compiler and
-the [CPU Falcons source](https://github.com/opensdc-org/Falcons). The commands
-below use the tested CPU revision and a BW150 (`gfx936`) with AVX2 host CPUs.
-On a different system, set `DTK_ROOT` and `HIP_ARCH` accordingly and remove
-`-DENABLE_AVX2=ON` when your CPU does not support AVX2/FMA.
+**Clone only HipFalcons.** The tested CPU Falcons and fallback Zstd sources
+are included as ordinary files. No second clone, submodule initialization,
+or dependency download is needed during the CMake build.
+
+Use Linux, a working HIP/DTK installation, CMake 3.18+, and a C++17 compiler.
+The commands below target a BW150 (`gfx936`) with an AVX2/FMA host CPU.
+On a different system, adjust `DTK_ROOT` and `HIP_ARCH`; omit
+`-DENABLE_AVX2=ON` when the host does not support AVX2/FMA.
 
 ```bash
-git clone https://github.com/opensdc-org/Falcons.git deps/Falcons
-git -C deps/Falcons checkout --detach 6312f4ce2642ba9efab7dcd0f0caf6a94c6278d5
+git clone https://github.com/BingluCS/HipFalcons.git
+cd HipFalcons
 
 source /opt/dtk/env.sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DHIP_ARCH=gfx936 -DENABLE_AVX2=ON
@@ -28,9 +31,12 @@ cmake --build build -j4
 build/hipfalcons --self-test
 ```
 
-Pass `-DFALCONS_SOURCE=/path/to/Falcons` to use a checkout you already have.
-Falcons uses system Zstd when available; an offline build can pass
-`-DFETCHCONTENT_SOURCE_DIR_ZSTDFETCHED=/path/to/zstd-1.4.5`.
+Falcons uses system Zstd when available, otherwise it builds
+`third_party/zstd`. No system Zstd development package is required.
+If you built an earlier checkout, configure a **new build directory** so
+the old CMake cache does not keep pointing to `deps/Falcons`.
+Pass `-DFALCONS_SOURCE=/path/to/Falcons` only to use a compatible external
+checkout instead of the [bundled source](third_party/README.md).
 If an older DTK installation selects the wrong GCC headers, export
 `HIPCC_COMPILE_FLAGS_APPEND="--gcc-install-dir=$(dirname "$(g++ -print-file-name=libgcc.a)")"`
 before building. Check that `rocminfo` sees the DCU in the job that will run
@@ -74,6 +80,6 @@ back. Use trusted input files.
 
 ## License
 
-See [LICENSE](LICENSE) and the preserved
-[Falcons notices](copyright-and-BSD-license.txt). Falcons is a separate
-build dependency; its third-party components retain their own notices.
+See [LICENSE](LICENSE), the preserved
+[Falcons notices](copyright-and-BSD-license.txt), and the notices
+shipped with the [bundled dependencies](third_party/README.md).
