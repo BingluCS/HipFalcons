@@ -1,0 +1,82 @@
+{
+  "small": {
+    "runs": [
+      {
+        "read_ms": 0.18646381795406342,
+        "native_pack_plus_ipc_alloc_ms": 4.804600030183792,
+        "worker_ms": 4.9910638481378555,
+        "pin_ms": 0.10311603546142578,
+        "h2d_ms": 0.0719980001449585,
+        "reconstruct_ms": 0.19215300679206848,
+        "bytes_uploaded": 1091396
+      },
+      {
+        "read_ms": 0.14279456809163094,
+        "native_pack_plus_ipc_alloc_ms": 4.60988562554121,
+        "worker_ms": 4.752680193632841,
+        "pin_ms": 0.08644722402095795,
+        "h2d_ms": 0.06735800206661224,
+        "reconstruct_ms": 0.19455300271511078,
+        "bytes_uploaded": 1091412
+      },
+      {
+        "read_ms": 0.13760756701231003,
+        "native_pack_plus_ipc_alloc_ms": 4.613453522324562,
+        "worker_ms": 4.751061089336872,
+        "pin_ms": 0.08262693881988525,
+        "h2d_ms": 0.0663980022072792,
+        "reconstruct_ms": 0.19967199862003326,
+        "bytes_uploaded": 1091436
+      }
+    ],
+    "median": {
+      "read_ms": 0.14279456809163094,
+      "native_pack_plus_ipc_alloc_ms": 4.613453522324562,
+      "worker_ms": 4.752680193632841,
+      "pin_ms": 0.08644722402095795,
+      "h2d_ms": 0.06735800206661224,
+      "reconstruct_ms": 0.19455300271511078,
+      "bytes_uploaded": 1091412
+    }
+  },
+  "era5": {
+    "runs": [
+      {
+        "read_ms": 0.7475269958376884,
+        "native_pack_plus_ipc_alloc_ms": 20.832651760429144,
+        "worker_ms": 21.580178756266832,
+        "pin_ms": 1.0738139972090721,
+        "h2d_ms": 0.34430599212646484,
+        "reconstruct_ms": 0.3844659924507141,
+        "bytes_uploaded": 8315704
+      },
+      {
+        "read_ms": 0.7633143104612827,
+        "native_pack_plus_ipc_alloc_ms": 20.74498776346445,
+        "worker_ms": 21.508302073925734,
+        "pin_ms": 0.9892266243696213,
+        "h2d_ms": 0.34366801381111145,
+        "reconstruct_ms": 0.38702499866485596,
+        "bytes_uploaded": 8315760
+      },
+      {
+        "read_ms": 0.770514365285635,
+        "native_pack_plus_ipc_alloc_ms": 20.753986667841673,
+        "worker_ms": 21.524501033127308,
+        "pin_ms": 1.0043173097074032,
+        "h2d_ms": 0.3427079916000366,
+        "reconstruct_ms": 0.38670599460601807,
+        "bytes_uploaded": 8315640
+      }
+    ],
+    "median": {
+      "read_ms": 0.7633143104612827,
+      "native_pack_plus_ipc_alloc_ms": 20.753986667841673,
+      "worker_ms": 21.524501033127308,
+      "pin_ms": 1.0043173097074032,
+      "h2d_ms": 0.34366801381111145,
+      "reconstruct_ms": 0.38670599460601807,
+      "bytes_uploaded": 8315704
+    }
+  }
+}

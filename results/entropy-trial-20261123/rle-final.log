@@ -1,0 +1,8 @@
+host parity OK: planes=16 jobs=16 codes=524256 uploaded_entropy_bytes=1063555 dense_code_bytes=1048512 prepare_ms=4.09511
+route=cpu-entropy trial=1 end_to_device_ms=3.87465 cpu_prepare_ms=3.54891 h2d_ms=0.11783 interp_ms=0.21946
+route=hip-entropy trial=1 end_to_device_ms=3.90366 cpu_prepare_ms=2.97024 h2d_ms=0.12518 dcu_entropy_ms=0.442821 escape_and_interp_ms=0.36915
+route=hip-entropy trial=2 end_to_device_ms=3.80308 cpu_prepare_ms=2.8797 h2d_ms=0.123931 dcu_entropy_ms=0.43723 escape_and_interp_ms=0.36582
+route=cpu-entropy trial=2 end_to_device_ms=3.84996 cpu_prepare_ms=3.52898 h2d_ms=0.11465 interp_ms=0.20878
+route=cpu-entropy trial=3 end_to_device_ms=3.83622 cpu_prepare_ms=3.51769 h2d_ms=0.114181 interp_ms=0.20671
+route=hip-entropy trial=3 end_to_device_ms=3.79618 cpu_prepare_ms=2.8674 h2d_ms=0.12349 dcu_entropy_ms=0.44114 escape_and_interp_ms=0.36762
+device float32 parity OK

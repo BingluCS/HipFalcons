@@ -1,0 +1,16 @@
+/build*/
+/deps/
+/dist/
+/.venv/
+__pycache__/
+*.egg-info/
+*.pyc
+*.so
+*.o
+*.a
+*.f32
+*.falcons
+*.h5
+*.hdf5
+*.npy
+.DS_Store

@@ -1,0 +1,150 @@
+{
+  "workload": {
+    "abs_error": 0.001,
+    "batch_size": 1,
+    "channels": 4,
+    "device": "cuda:0",
+    "future": 1,
+    "height": 721,
+    "history": 1,
+    "max_fixture_and_output_bytes": 2147483648,
+    "seed": 20261119,
+    "timed_batches": 48,
+    "width": 1440,
+    "windows": 3,
+    "workers": 4
+  },
+  "fixture": {
+    "abs_bound": 0.001,
+    "compressed_bytes": 99110320,
+    "config_bytes": 43,
+    "filter_id": 40024,
+    "h5py_version": "3.12.1",
+    "hdf5_version": "1.14.4",
+    "max_abs_error": 0.000999998301267624,
+    "numpy_version": "1.25.0",
+    "original_sha256": "c02e9f10da5efc676ee4ead22274cc53b6318aa7e890415a1b29006fd419aced",
+    "plugin_threads": 1,
+    "raw_bytes": 830592000,
+    "shape": [
+      50,
+      4,
+      721,
+      1440
+    ]
+  },
+  "results": {
+    "window": [
+      {
+        "cold_first_batch_ms": 11658.743288833648,
+        "elapsed_ms": 265.588466078043,
+        "first_batch_ms": 69.50261676684022,
+        "first_plus_steady_ms_per_batch": 6.838593527446596,
+        "logical_gb_per_s": 6.004540270703577,
+        "ms_per_batch": 5.5330930432925625,
+        "pid": 2148749,
+        "route": "dcu_stream",
+        "samples": 48,
+        "samples_per_s": 180.73073996329055,
+        "setup_ms": 85.79414384439588,
+        "sha256": "2e40f3734a866bd718976b0924f1b0bd375a9bdc757f3bae3dd36479f99863f8",
+        "timed_batches": 48,
+        "torch_hip_version": "6.3.26093",
+        "torch_version": "2.9.0"
+      },
+      {
+        "cold_first_batch_ms": 11615.746419876814,
+        "elapsed_ms": 261.6053372621536,
+        "first_batch_ms": 65.98054710775614,
+        "first_plus_steady_ms_per_batch": 6.685426211630811,
+        "logical_gb_per_s": 6.095963701237184,
+        "ms_per_batch": 5.450111192961534,
+        "pid": 2149154,
+        "route": "dcu_stream",
+        "samples": 48,
+        "samples_per_s": 183.48249505284136,
+        "setup_ms": 92.61458599939942,
+        "sha256": "2e40f3734a866bd718976b0924f1b0bd375a9bdc757f3bae3dd36479f99863f8",
+        "timed_batches": 48,
+        "torch_hip_version": "6.3.26093",
+        "torch_version": "2.9.0"
+      },
+      {
+        "cold_first_batch_ms": 11587.53188000992,
+        "elapsed_ms": 274.69946490600705,
+        "first_batch_ms": 65.61091588810086,
+        "first_plus_steady_ms_per_batch": 6.9451098121246515,
+        "logical_gb_per_s": 5.8053867725795,
+        "ms_per_batch": 5.722905518875147,
+        "pid": 2149235,
+        "route": "dcu_stream",
+        "samples": 48,
+        "samples_per_s": 174.73641609176047,
+        "setup_ms": 91.0731889307499,
+        "sha256": "2e40f3734a866bd718976b0924f1b0bd375a9bdc757f3bae3dd36479f99863f8",
+        "timed_batches": 48,
+        "torch_hip_version": "6.3.26093",
+        "torch_version": "2.9.0"
+      }
+    ],
+    "delivery": [
+      {
+        "cold_first_batch_ms": 11782.11353905499,
+        "elapsed_ms": 216.78323904052377,
+        "first_batch_ms": 83.14006077125669,
+        "first_plus_steady_ms_per_batch": 6.1208836696281725,
+        "logical_gb_per_s": 7.356365035683835,
+        "ms_per_batch": 4.516317480010912,
+        "pid": 2148814,
+        "route": "dcu_stream",
+        "samples": 48,
+        "samples_per_s": 221.419332105409,
+        "setup_ms": 93.09885231778026,
+        "sha256": "2e40f3734a866bd718976b0924f1b0bd375a9bdc757f3bae3dd36479f99863f8",
+        "timed_batches": 48,
+        "torch_hip_version": "6.3.26093",
+        "torch_version": "2.9.0"
+      },
+      {
+        "cold_first_batch_ms": 11678.274007048458,
+        "elapsed_ms": 210.1057069376111,
+        "first_batch_ms": 63.51488223299384,
+        "first_plus_steady_ms_per_batch": 5.584093656542958,
+        "logical_gb_per_s": 7.590163367021448,
+        "ms_per_batch": 4.377202227866898,
+        "pid": 2148864,
+        "route": "dcu_stream",
+        "samples": 48,
+        "samples_per_s": 228.4564312870052,
+        "setup_ms": 97.3611087538302,
+        "sha256": "2e40f3734a866bd718976b0924f1b0bd375a9bdc757f3bae3dd36479f99863f8",
+        "timed_batches": 48,
+        "torch_hip_version": "6.3.26093",
+        "torch_version": "2.9.0"
+      },
+      {
+        "cold_first_batch_ms": 11597.229598090053,
+        "elapsed_ms": 207.3837649077177,
+        "first_batch_ms": 63.806327059865,
+        "first_plus_steady_ms_per_batch": 5.53449167280781,
+        "logical_gb_per_s": 7.6897853634281885,
+        "ms_per_batch": 4.320495102244119,
+        "pid": 2149287,
+        "route": "dcu_stream",
+        "samples": 48,
+        "samples_per_s": 231.454955123219,
+        "setup_ms": 93.566978815943,
+        "sha256": "2e40f3734a866bd718976b0924f1b0bd375a9bdc757f3bae3dd36479f99863f8",
+        "timed_batches": 48,
+        "torch_hip_version": "6.3.26093",
+        "torch_version": "2.9.0"
+      }
+    ]
+  },
+  "median_ms_per_batch": {
+    "window": 5.5330930432925625,
+    "delivery": 4.377202227866898
+  },
+  "speedup": 1.2640706906495736,
+  "tensor_sha256": "2e40f3734a866bd718976b0924f1b0bd375a9bdc757f3bae3dd36479f99863f8"
+}
