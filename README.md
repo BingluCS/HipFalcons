@@ -16,16 +16,17 @@ slicing.
 are included as ordinary files. No second clone, submodule initialization,
 or dependency download is needed during the CMake build.
 
-Use Linux, a working HIP/DTK installation, CMake 3.18+, and a C++17 compiler.
+Use Linux, CMake 3.18+, a C++17 compiler, and an active HIP/DTK environment.
+Set up HIP using your server's instructions before building. If CMake needs
+the installation location, pass `-DDTK_ROOT=<HIP-install-prefix>`.
 The commands below target a BW150 (`gfx936`) with an AVX2/FMA host CPU.
-On a different system, adjust `DTK_ROOT` and `HIP_ARCH`; omit
-`-DENABLE_AVX2=ON` when the host does not support AVX2/FMA.
+Set `HIP_ARCH` for your device and omit `-DENABLE_AVX2=ON` when the host does
+not support AVX2/FMA.
 
 ```bash
 git clone https://github.com/BingluCS/HipFalcons.git
 cd HipFalcons
 
-source /opt/dtk/env.sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DHIP_ARCH=gfx936 -DENABLE_AVX2=ON
 cmake --build build -j4
 build/hipfalcons --self-test
@@ -37,10 +38,8 @@ If you built an earlier checkout, configure a **new build directory** so
 the old CMake cache does not keep pointing to `deps/Falcons`.
 Pass `-DFALCONS_SOURCE=/path/to/Falcons` only to use a compatible external
 checkout instead of the [bundled source](third_party/README.md).
-If an older DTK installation selects the wrong GCC headers, export
-`HIPCC_COMPILE_FLAGS_APPEND="--gcc-install-dir=$(dirname "$(g++ -print-file-name=libgcc.a)")"`
-before building. Check that `rocminfo` sees the DCU in the job that will run
-the example; management-tool visibility alone does not grant compute access.
+Check that `rocminfo` sees the DCU in the job that will run the example;
+management-tool visibility alone does not grant compute access.
 
 ## DataLoader Quick Start
 
