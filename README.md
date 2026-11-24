@@ -55,24 +55,44 @@ HIP_VISIBLE_DEVICES=0 python examples/dcu_dataloader.py --demo \
 ```
 
 The demo generates a small compatible HDF5 file and runs a real forward,
-backward, and optimizer step on the DCU. For your own file, see the
-[DataLoader example](examples/README.md) and [input and tuning guide](docs/dataloader.md).
+backward, and optimizer step on the DCU. To use an existing compatible file
+from Python:
+
+```python
+from contextlib import closing
+from hipfalcons import ERA5Loader
+
+with ERA5Loader(
+    "fields.h5", dataset="fields",
+    library_path="build/libhipfalcons_loader.so",
+    route="dcu_stream", device="cuda:0", num_workers=2,
+    batch_size=1, history=1, future=1, channels=[0],
+) as loader:
+    with closing(iter(loader)) as batches:
+        history, target = next(batches)
+        print(history.shape, target.shape, history.device)
+```
+
 PyTorch uses the `cuda:0` device namespace on HIP; no NVIDIA GPU is required.
 Start the loader before moving the model or anything else to the DCU, so
-the workers fork before HIP initialization.
+the workers fork before HIP initialization. See the
+[Python guide](docs/dataloader.md#python-api) for shapes and arguments,
+and the [training example](examples/README.md) for a complete loop.
 
 ## Supported Streams
 
 | Entry point | Input | Output |
 | --- | --- | --- |
 | `build/hipfalcons input.falcons output.f32` | CPU-generated serial float32 LINEAR interpolation, 1D/2D/3D, radius 32768 | Raw float32 file in host storage |
-| `ERA5Loader`, `route="dcu_stream"` or `"dcu"` | One HDF5 dataset `[T,C,H,W]` with chunks `(1,1,H,W)`, one Falcons filter (40024), each chunk a supported 2D stream | Two tensors `[batch,time,channel,height,width]` already on the DCU |
+| `ERA5Loader`, `route="dcu_stream"` or `"dcu"` | Native-endian `float32 [T,C,H,W]`, not fixed to an ERA5 grid. Uses chunks `(1,1,H,W)`, one Falcons filter (40024), and a supported 2D stream in each chunk. | Two tensors `[batch,time,channel,height,width]` already on the DCU |
 
 The HIP path does not accept cubic, Lorenzo, OpenMP, lossless-only or
 non-float32 streams. An automatically tuned CPU encoder may choose an
 unsupported mode. `route="cpu_stream"` explicitly selects the CPU Falcons
-decoder and uploads float32 tensors; the HIP path does not silently fall
-back. Use trusted input files.
+decoder and uploads float32 tensors; it still requires the specified HDF5
+layout. The HIP path does not silently fall back. This is not a drop-in
+replacement for readers that return additional fields such as timestamps.
+Use trusted input files.
 
 [Performance and reproducible comparisons](docs/performance.md) ·
 [Optional HIP entropy experiment](entropy_trial/README.md)
