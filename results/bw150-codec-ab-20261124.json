@@ -1,0 +1,406 @@
+{
+  "meta": {
+    "machine": "HPDPS-6, one BW150 gfx936",
+    "date": "2026-11-24",
+    "baseline_binary_sha256": "9f53a70fadde6d492799c8cbbcb912a0dfed585133a15b6dd948e117e2cbfb1e",
+    "candidate_binary_sha256": "718ec6601d5db215e70af0a2ae2b02114b52e1da0356843caab95da2c5e3116d",
+    "codec_protocol": "1 warm-up and median of 3 synchronous in-process calls, memory to memory, excluding file IO and CLI config parsing. 2D 721x1440 or 3D 8x721x180, f32. Encode ABS=0.0005 CUBIC with sparse outliers; 2D serial, 3D four substreams. OMP_NUM_THREADS=4 OMP_DYNAMIC=FALSE OMP_PROC_BIND=close OMP_PLACES=cores.",
+    "note": "For baseline lossless-only, hybrid and pure invoke identical device code; only hybrid was measured. New hybrid uses CPU Zstd. cpu_ms is an independently timed CPU decode of the same stream to a caller-owned host buffer, using the bundled baseline CPU library.",
+    "loader_protocol": "Synthetic fields [50,4,721,1440], ABS=0.001. Batch size 1, four workers, history=1, future=1. 48 timed synchronized device batches per run after first sample; 3 independent gated runs per route. No training step."
+  },
+  "before": {
+    "encode/2d/hybrid": {
+      "ms": 7.9318,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 1387503
+    },
+    "encode/2d/pure": {
+      "ms": 742.481,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 1406682
+    },
+    "encode/3d/hybrid": {
+      "ms": 7.85575,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 1411432
+    },
+    "encode/3d/pure": {
+      "ms": 198.568,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 1453231
+    },
+    "decode/rle-hybrid-1/hybrid": {
+      "ms": 1.38226,
+      "recon_ms": 0.15182,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 3148,
+      "bitwise_cpu": true,
+      "cpu_ms": 1.370058991597034
+    },
+    "decode/rle-hybrid-1/pure": {
+      "ms": 2.72422,
+      "recon_ms": 0.22492,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 3148,
+      "bitwise_cpu": true,
+      "cpu_ms": 1.370058991597034
+    },
+    "decode/rle-hybrid-32/hybrid": {
+      "ms": 2.03826,
+      "recon_ms": 0.15739,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 5470,
+      "bitwise_cpu": true,
+      "cpu_ms": 3.9657860033912584
+    },
+    "decode/rle-hybrid-32/pure": {
+      "ms": 2.27622,
+      "recon_ms": 0.1879,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 5470,
+      "bitwise_cpu": true,
+      "cpu_ms": 3.9657860033912584
+    },
+    "decode/h1-hybrid-1/hybrid": {
+      "ms": 16.9481,
+      "recon_ms": 0.15879,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 192594,
+      "bitwise_cpu": true,
+      "cpu_ms": 6.093974006944336
+    },
+    "decode/h1-hybrid-1/pure": {
+      "ms": 124.03,
+      "recon_ms": 0.177149,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 192594,
+      "bitwise_cpu": true,
+      "cpu_ms": 6.093974006944336
+    },
+    "decode/split-hybrid-1/hybrid": {
+      "ms": 4.61245,
+      "recon_ms": 0.16842,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 1387776,
+      "bitwise_cpu": true,
+      "cpu_ms": 3.7958460015943274
+    },
+    "decode/split-hybrid-1/pure": {
+      "ms": 10.6846,
+      "recon_ms": 0.18167,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 1387776,
+      "bitwise_cpu": true,
+      "cpu_ms": 3.7958460015943274
+    },
+    "decode/split-hybrid-4/hybrid": {
+      "ms": 5.1616,
+      "recon_ms": 0.16991,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 1389142,
+      "bitwise_cpu": true,
+      "cpu_ms": 1.1812089942395687
+    },
+    "decode/split-hybrid-4/pure": {
+      "ms": 10.5241,
+      "recon_ms": 0.18121,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 1389142,
+      "bitwise_cpu": true,
+      "cpu_ms": 1.1812089942395687
+    },
+    "decode/lossless-compressed/hybrid": {
+      "ms": 4191.2,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 3669758,
+      "bitwise_cpu": true,
+      "cpu_ms": 5.802724001114257
+    },
+    "decode/lossless-raw/hybrid": {
+      "ms": 1.16743,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 4153117,
+      "bitwise_cpu": true,
+      "cpu_ms": 0.15418999828398228
+    },
+    "decode/lossless-rle/hybrid": {
+      "ms": 30.9391,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 198,
+      "bitwise_cpu": true,
+      "cpu_ms": 0.10755000403150916
+    },
+    "decode/3d-outliers/hybrid": {
+      "ms": 4.75727,
+      "recon_ms": 0.16355,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 1411432,
+      "bitwise_cpu": true,
+      "cpu_ms": 1.4652889949502423
+    },
+    "decode/3d-outliers/pure": {
+      "ms": 10.8641,
+      "recon_ms": 0.17429,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 1411432,
+      "bitwise_cpu": true,
+      "cpu_ms": 1.4652889949502423
+    }
+  },
+  "after": {
+    "encode/2d/hybrid": {
+      "ms": 6.86752,
+      "max_abs_error": 0.0004999935626983643,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 1387503
+    },
+    "encode/2d/pure": {
+      "ms": 246.851,
+      "max_abs_error": 0.0004999935626983643,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 1406682
+    },
+    "encode/3d/hybrid": {
+      "ms": 3.08324,
+      "max_abs_error": 0.0004999935626983643,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 1411432
+    },
+    "encode/3d/pure": {
+      "ms": 73.2049,
+      "max_abs_error": 0.0004999935626983643,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 1453231
+    },
+    "decode/rle-hybrid-1/hybrid": {
+      "ms": 1.22639,
+      "recon_ms": 0.1622,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 3148,
+      "bitwise_cpu": true
+    },
+    "decode/rle-hybrid-1/pure": {
+      "ms": 2.71437,
+      "recon_ms": 0.22382,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 3148,
+      "bitwise_cpu": true
+    },
+    "decode/rle-hybrid-32/hybrid": {
+      "ms": 1.93636,
+      "recon_ms": 0.16482,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 5470,
+      "bitwise_cpu": true
+    },
+    "decode/rle-hybrid-32/pure": {
+      "ms": 2.30505,
+      "recon_ms": 0.19322,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 5470,
+      "bitwise_cpu": true
+    },
+    "decode/h1-hybrid-1/hybrid": {
+      "ms": 9.47204,
+      "recon_ms": 0.157439,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 192594,
+      "bitwise_cpu": true
+    },
+    "decode/h1-hybrid-1/pure": {
+      "ms": 122.973,
+      "recon_ms": 0.17447,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 192594,
+      "bitwise_cpu": true
+    },
+    "decode/split-hybrid-1/hybrid": {
+      "ms": 4.3146,
+      "recon_ms": 0.16628,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 1387776,
+      "bitwise_cpu": true
+    },
+    "decode/split-hybrid-1/pure": {
+      "ms": 10.6848,
+      "recon_ms": 0.22963,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 1387776,
+      "bitwise_cpu": true
+    },
+    "decode/split-hybrid-4/hybrid": {
+      "ms": 4.00404,
+      "recon_ms": 0.17283,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 1389142,
+      "bitwise_cpu": true
+    },
+    "decode/split-hybrid-4/pure": {
+      "ms": 10.6134,
+      "recon_ms": 0.18316,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 1389142,
+      "bitwise_cpu": true
+    },
+    "decode/lossless-compressed/hybrid": {
+      "ms": 5.83013,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 3669758,
+      "bitwise_cpu": true
+    },
+    "decode/lossless-compressed/pure": {
+      "ms": 4203.15,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 3669758,
+      "bitwise_cpu": true
+    },
+    "decode/lossless-raw/hybrid": {
+      "ms": 0.1508,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 4153117,
+      "bitwise_cpu": true
+    },
+    "decode/lossless-raw/pure": {
+      "ms": 1.10548,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 4153117,
+      "bitwise_cpu": true
+    },
+    "decode/lossless-rle/hybrid": {
+      "ms": 0.10573,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 198,
+      "bitwise_cpu": true
+    },
+    "decode/lossless-rle/pure": {
+      "ms": 30.8563,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 198,
+      "bitwise_cpu": true
+    },
+    "decode/3d-outliers/hybrid": {
+      "ms": 4.06425,
+      "recon_ms": 0.16023,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 1411432,
+      "bitwise_cpu": true
+    },
+    "decode/3d-outliers/pure": {
+      "ms": 10.993,
+      "recon_ms": 0.17704,
+      "raw_bytes": 4152960,
+      "compressed_bytes": 1411432,
+      "bitwise_cpu": true
+    }
+  },
+  "loader": [
+    {
+      "route": "cpu_stream",
+      "setup_ms": 73.30488201114349,
+      "first_batch_ms": 79.93313499900978,
+      "cold_first_batch_ms": 11316.914849012392,
+      "timed_batches": 48,
+      "samples": 48,
+      "elapsed_ms": 544.7439830022631,
+      "ms_per_batch": 11.348832979213816,
+      "samples_per_s": 88.11478694166794,
+      "first_plus_steady_ms_per_batch": 12.748512612270876,
+      "logical_gb_per_s": 2.9274974846181547,
+      "sha256": "2e40f3734a866bd718976b0924f1b0bd375a9bdc757f3bae3dd36479f99863f8",
+      "torch_version": "2.9.0",
+      "torch_hip_version": "6.3.26093",
+      "topology": "cpu4",
+      "timing_gate": "no timed batch starts before the wall timer"
+    },
+    {
+      "route": "cpu_stream",
+      "setup_ms": 75.30779700027779,
+      "first_batch_ms": 78.1253160093911,
+      "cold_first_batch_ms": 11329.273278010078,
+      "timed_batches": 48,
+      "samples": 48,
+      "elapsed_ms": 544.4231590081472,
+      "ms_per_batch": 11.342149146003067,
+      "samples_per_s": 88.16671224539456,
+      "first_plus_steady_ms_per_batch": 12.705070918725271,
+      "logical_gb_per_s": 2.9292226342930703,
+      "sha256": "2e40f3734a866bd718976b0924f1b0bd375a9bdc757f3bae3dd36479f99863f8",
+      "torch_version": "2.9.0",
+      "torch_hip_version": "6.3.26093",
+      "topology": "cpu4",
+      "timing_gate": "no timed batch starts before the wall timer"
+    },
+    {
+      "route": "cpu_stream",
+      "setup_ms": 70.4676669993205,
+      "first_batch_ms": 78.41357900178991,
+      "cold_first_batch_ms": 11318.575530996895,
+      "timed_batches": 48,
+      "samples": 48,
+      "elapsed_ms": 549.269163995632,
+      "ms_per_batch": 11.443107583242332,
+      "samples_per_s": 87.38884894033797,
+      "first_plus_steady_ms_per_batch": 12.809851897906569,
+      "logical_gb_per_s": 2.9033791527621275,
+      "sha256": "2e40f3734a866bd718976b0924f1b0bd375a9bdc757f3bae3dd36479f99863f8",
+      "torch_version": "2.9.0",
+      "torch_hip_version": "6.3.26093",
+      "topology": "cpu4",
+      "timing_gate": "no timed batch starts before the wall timer"
+    },
+    {
+      "route": "dcu_stream",
+      "setup_ms": 77.0956189953722,
+      "first_batch_ms": 69.84086098964326,
+      "cold_first_batch_ms": 11308.959902991774,
+      "timed_batches": 48,
+      "samples": 48,
+      "elapsed_ms": 275.09928900690284,
+      "ms_per_batch": 5.731235187643809,
+      "samples_per_s": 174.48245749117723,
+      "first_plus_steady_ms_per_batch": 7.039594897888696,
+      "logical_gb_per_s": 5.796949333300475,
+      "sha256": "2e40f3734a866bd718976b0924f1b0bd375a9bdc757f3bae3dd36479f99863f8",
+      "torch_version": "2.9.0",
+      "torch_hip_version": "6.3.26093",
+      "topology": "dcu4",
+      "timing_gate": "no timed batch starts before the wall timer"
+    },
+    {
+      "route": "dcu_stream",
+      "setup_ms": 75.05565500468947,
+      "first_batch_ms": 69.91988301160745,
+      "cold_first_batch_ms": 11321.970310003962,
+      "timed_batches": 48,
+      "samples": 48,
+      "elapsed_ms": 273.22834299411625,
+      "ms_per_batch": 5.692257145710755,
+      "samples_per_s": 175.67723565572274,
+      "first_plus_steady_ms_per_batch": 7.003025020524974,
+      "logical_gb_per_s": 5.836644260710322,
+      "sha256": "2e40f3734a866bd718976b0924f1b0bd375a9bdc757f3bae3dd36479f99863f8",
+      "torch_version": "2.9.0",
+      "torch_hip_version": "6.3.26093",
+      "topology": "dcu4",
+      "timing_gate": "no timed batch starts before the wall timer"
+    },
+    {
+      "route": "dcu_stream",
+      "setup_ms": 80.04942801198922,
+      "first_batch_ms": 69.93140099802986,
+      "cold_first_batch_ms": 11333.719431000645,
+      "timed_batches": 48,
+      "samples": 48,
+      "elapsed_ms": 270.675225998275,
+      "ms_per_batch": 5.639067208297395,
+      "samples_per_s": 177.33429360951527,
+      "first_plus_steady_ms_per_batch": 6.951155652985813,
+      "logical_gb_per_s": 5.891697823908581,
+      "sha256": "2e40f3734a866bd718976b0924f1b0bd375a9bdc757f3bae3dd36479f99863f8",
+      "torch_version": "2.9.0",
+      "torch_hip_version": "6.3.26093",
+      "topology": "dcu4",
+      "timing_gate": "no timed batch starts before the wall timer"
+    }
+  ]
+}

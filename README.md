@@ -10,6 +10,10 @@ file format do not change. The loader does not require the HDF5 filter plugin
 for reading, because it reads the stored chunk bytes instead of invoking h5py
 slicing.
 
+The repository also has a [standalone HIP codec](codec/README.md) for
+CPU-compatible Falcons interpolation compression and decompression. It is a
+separate build target and does not change the HDF5 or Python reader.
+
 ## Build
 
 **Clone only HipFalcons.** The tested CPU Falcons and fallback Zstd sources
@@ -86,8 +90,8 @@ and the [training example](examples/README.md) for a complete loop.
 | `build/hipfalcons input.falcons output.f32` | CPU-generated serial float32 LINEAR interpolation, 1D/2D/3D, radius 32768 | Raw float32 file in host storage |
 | `ERA5Loader`, `route="dcu_stream"` or `"dcu"` | Native-endian `float32 [T,C,H,W]`, not fixed to an ERA5 grid. Uses chunks `(1,1,H,W)`, one Falcons filter (40024), and a supported 2D stream in each chunk. | Two tensors `[batch,time,channel,height,width]` already on the DCU |
 
-The HIP path does not accept cubic, Lorenzo, OpenMP, lossless-only or
-non-float32 streams. An automatically tuned CPU encoder may choose an
+The two reader entry points above do not accept cubic, Lorenzo, OpenMP,
+lossless-only or non-float32 streams. An automatically tuned CPU encoder may choose an
 unsupported mode. `route="cpu_stream"` explicitly selects the CPU Falcons
 decoder and uploads float32 tensors; it still requires the specified HDF5
 layout. The HIP path does not silently fall back. This is not a drop-in

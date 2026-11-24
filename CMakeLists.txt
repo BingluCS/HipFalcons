@@ -11,6 +11,7 @@ if(NOT EXISTS "${FALCONS_SOURCE}/include/Falcons/api/falcons.hpp")
         "Falcons source missing at ${FALCONS_SOURCE}. Use a fresh build directory for bundled dependencies "
         "or set -DFALCONS_SOURCE to a compatible checkout.")
 endif()
+
 find_program(HIPCC hipcc HINTS "${DTK_ROOT}/bin" REQUIRED)
 find_library(HIP_RUNTIME amdhip64 HINTS "${DTK_ROOT}/lib" "${DTK_ROOT}/lib64" REQUIRED)
 set(BUILD_Falcons_BINARY OFF CACHE BOOL "" FORCE)
@@ -79,5 +80,33 @@ if(HF_BUILD_ENTROPY_TRIAL)
     target_link_libraries(hipfalcons_entropy_trial PRIVATE Falcons::Falcons hipfalcons_loader falcons_loader_cpu "${HIP_RUNTIME}")
     if(TARGET zstd)
         target_include_directories(hipfalcons_entropy_trial SYSTEM PRIVATE "${zstdfetched_SOURCE_DIR}/lib/common")
+    endif()
+endif()
+
+option(HF_BUILD_HIP_CODEC "Build the HIP port of the Falcons GPU codec" OFF)
+if(HF_BUILD_HIP_CODEC)
+    set(codec_dir "${CMAKE_CURRENT_SOURCE_DIR}/codec")
+    set(codec_obj "${CMAKE_CURRENT_BINARY_DIR}/fgpu_codec.hip.o")
+    set(codec_include_flags "-I${FALCONS_SOURCE}/include")
+    if(TARGET zstd)
+        list(APPEND codec_include_flags "-I${zstdfetched_SOURCE_DIR}/lib"
+                    "-I${zstdfetched_SOURCE_DIR}/lib/common")
+    endif()
+    add_custom_command(OUTPUT "${codec_obj}"
+        COMMAND "${HIPCC}" -std=c++17 -O2 -fPIC -ffp-contract=off ${arch_flag}
+                -DFGPU_ENABLE_EXPERIMENTAL_PURE_ENCODER=1 -DFGPU_ENABLE_EXPERIMENTAL_SPLIT_DECODER=1
+                ${codec_include_flags}
+                -x hip -c "${codec_dir}/fgpu_recon.hip.cpp" -o "${codec_obj}"
+        DEPENDS codec/fgpu_recon.hip.cpp codec/fgpu_recon.h codec/fgpu_plan.hpp codec/fgpu_shared.h
+                codec/fgpu_pure.inl codec/fgpu_split.inl codec/fgpu_compress.inl codec/fgpu_entropy.inl
+                codec/fgpu_encode.inl codec/fgpu_fse_enc.inl codec/fgpu_lossless.inl codec/fgpu_lossless.hpp VERBATIM)
+    set_source_files_properties("${codec_obj}" PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
+    add_executable(hipfalcons_codec codec/main.cpp "${codec_obj}")
+    target_compile_features(hipfalcons_codec PRIVATE cxx_std_17)
+    target_compile_definitions(hipfalcons_codec PRIVATE __HIP_PLATFORM_AMD__=1)
+    target_include_directories(hipfalcons_codec SYSTEM PRIVATE "${DTK_ROOT}/include")
+    target_link_libraries(hipfalcons_codec PRIVATE Falcons::Falcons "${HIP_RUNTIME}")
+    if(TARGET zstd)
+        target_include_directories(hipfalcons_codec SYSTEM PRIVATE "${zstdfetched_SOURCE_DIR}/lib/common")
     endif()
 endif()

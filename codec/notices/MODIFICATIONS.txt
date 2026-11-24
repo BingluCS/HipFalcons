@@ -1,0 +1,13 @@
+HIP device port by OpenAI, 2026, based on the Falcons GPU sources at
+b564b454e98f732284fda6cbd194ae597c698d65.
+
+Changes include HIP runtime translation, portable bit reading and packing,
+wide prefix scans, escape-count validation, signed-zero quantization,
+host-side method preflight, and an experimental 1.1.0 split-FSE decoder.
+The pure GPU encoder is experimental and disabled by default; define
+FGPU_ENABLE_EXPERIMENTAL_PURE_ENCODER=1 to build it for validation.
+The split-FSE decoder is experimental and disabled by default; define
+FGPU_ENABLE_EXPERIMENTAL_SPLIT_DECODER=1 to build it for validation.
+
+LICENSE contains the original SZ license and disclaimer, retained verbatim.
+The other files retain the upstream third-party license alternatives and notices.

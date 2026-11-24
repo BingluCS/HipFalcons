@@ -1,5 +1,8 @@
 # Reference Measurements
 
+For the standalone codec and the November 24 reader retest, see the
+[BW150 before/after measurements](codec-performance.md).
+
 These are synthetic runs on HPDPS-6 with one BW150, not full ERA5 runs or
 training throughput. Both routes use one history and one target frame,
 four float32 channels and one serial Falcons LINEAR stream per plane. The
