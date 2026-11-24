@@ -36,6 +36,15 @@ cmake --build build -j4
 build/hipfalcons --self-test
 ```
 
+On DTK 26.04, a HIP compile error such as `'cmath' file not found` can
+mean that `hipcc` did not discover the host GCC installation. With the
+intended `g++` active, retry the build with:
+
+```bash
+HIPCC_COMPILE_FLAGS_APPEND="${HIPCC_COMPILE_FLAGS_APPEND:+$HIPCC_COMPILE_FLAGS_APPEND }--gcc-install-dir=$(dirname "$(g++ -print-file-name=libgcc.a)")" \
+  cmake --build build -j4
+```
+
 Falcons uses system Zstd when available, otherwise it builds
 `third_party/zstd`. No system Zstd development package is required.
 If you built an earlier checkout, configure a **new build directory** so

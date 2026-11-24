@@ -1,0 +1,109 @@
+{
+  "device": "1 x BW150 (gfx936)",
+  "build": "Release, host AVX2",
+  "torch": "2.9.0",
+  "torch_hip": "6.3.26093",
+  "fixture": {
+    "kind": "synthetic",
+    "shape_tchw": [
+      50,
+      4,
+      721,
+      1440
+    ],
+    "chunks": [
+      1,
+      1,
+      721,
+      1440
+    ],
+    "dtype": "float32",
+    "prediction": "serial 2D LINEAR",
+    "abs_error": 0.001
+  },
+  "benchmark": {
+    "batch_size": 1,
+    "history": 1,
+    "future": 1,
+    "warmup_batches": 1,
+    "timed_batches": 48,
+    "gate_prefetch": true,
+    "windows_per_configuration": 3,
+    "endpoint": "synchronized device tensors; includes device sums, excludes verification copies and training"
+  },
+  "all_windows_cpu_oracle_bitwise": true,
+  "all_windows_sha256": "2e40f3734a866bd718976b0924f1b0bd375a9bdc757f3bae3dd36479f99863f8",
+  "configurations": [
+    {
+      "route": "cpu_stream",
+      "workers": 4,
+      "cpu_affinity": "default",
+      "window_ms_per_batch": [
+        11.64782472915249,
+        11.650822291509636,
+        13.334692937557216
+      ],
+      "median_ms_per_batch": 11.650822291509636,
+      "samples_per_s": 85.83085167548519
+    },
+    {
+      "route": "dcu_stream",
+      "workers": 4,
+      "cpu_affinity": "default",
+      "window_ms_per_batch": [
+        5.779056916556631,
+        5.625200520626095,
+        6.541089687440642
+      ],
+      "median_ms_per_batch": 5.779056916556631,
+      "samples_per_s": 173.03861416125935
+    },
+    {
+      "route": "dcu_stream",
+      "workers": 8,
+      "cpu_affinity": "default",
+      "window_ms_per_batch": [
+        5.565572854417648,
+        5.459298125060741,
+        5.626850687500943
+      ],
+      "median_ms_per_batch": 5.565572854417648,
+      "samples_per_s": 179.67602368303463
+    },
+    {
+      "route": "dcu_stream",
+      "workers": 16,
+      "cpu_affinity": "default",
+      "window_ms_per_batch": [
+        5.8013034998415,
+        5.877802666570157,
+        5.808720020771337
+      ],
+      "median_ms_per_batch": 5.808720020771337,
+      "samples_per_s": 172.1549663995013
+    },
+    {
+      "route": "dcu_stream",
+      "workers": 8,
+      "cpu_affinity": "0-15 (DCU-local physical cores)",
+      "window_ms_per_batch": [
+        4.431228833406446,
+        4.395916416797263,
+        4.478678541696961
+      ],
+      "median_ms_per_batch": 4.431228833406446,
+      "samples_per_s": 225.67103564165603
+    }
+  ],
+  "training_smoke": {
+    "route": "dcu_stream",
+    "workers": 4,
+    "model": "Conv2d(4, 4, kernel_size=1)",
+    "optimizer": "SGD",
+    "learning_rate": 0.001,
+    "oracle_bitwise": true,
+    "mse": 26.19417953491211,
+    "gradient_l2": 43.78725954643698,
+    "parameter_delta_l2": 0.043787254845893214
+  }
+}

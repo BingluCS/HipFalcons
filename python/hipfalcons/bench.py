@@ -50,6 +50,8 @@ def arguments():
     parser.add_argument("--candidate", choices=("gpu", "dcu", "dcu_stream"), default="dcu_stream")
     parser.add_argument("--extra", choices=("cpu_stream",), help="also measure this control route")
     parser.add_argument("--workers", type=int, default=2, help="DataLoader fork workers per route")
+    parser.add_argument("--gate-prefetch", action="store_true",
+                        help="allow only the warmup batch to be prefetched before timing starts")
     parser.add_argument("--limit-mib", type=int, default=MAX_BYTES // (1024 * 1024),
                         help="maximum MiB for the uncompressed fixture and retained outputs, each (default: 512)")
     parser.add_argument("--abs-error", type=float, default=1e-3)
@@ -185,7 +187,31 @@ def verify_batch(history, future, oracle, start, batch_size, h, w, device, diges
     digest.update(actual.tobytes(order="C"))
 
 
+def start_for_timing(loader, gate, timeout):
+    if gate is None:
+        loader.start()
+        return
+    from unittest.mock import patch
+    from .loader import _ChunkBatches
+
+    get_batch = _ChunkBatches.__getitem__
+
+    def gated_batch(dataset, task):
+        if not getattr(dataset, "_bench_gate_open", False):
+            first = task[2] if dataset.route in ("cpu_stream", "dcu_stream") else task[0] == 0
+            if not first:
+                if not gate.wait(timeout):
+                    raise RuntimeError("benchmark prefetch gate timed out")
+                dataset._bench_gate_open = True
+        return get_batch(dataset, task)
+
+    # Only the benchmark's forked workers inherit the gate. Restore the parent immediately.
+    with patch.object(_ChunkBatches, "__getitem__", gated_batch):
+        loader.start()
+
+
 def measure(args):
+    import multiprocessing as mp
     import numpy as np
     import torch
     from .loader import ERA5Loader
@@ -200,9 +226,10 @@ def measure(args):
                         history=HISTORY, future=FUTURE, dataset="fields", mean=None, std=None,
                         shuffle=False, drop_last=True)
     setup_start = time.perf_counter()
+    gate = mp.get_context("fork").Event() if args.gate_prefetch else None
     try:
         # This must fork the persistent workers before any CUDA/HIP runtime use.
-        loader.start()
+        start_for_timing(loader, gate, args.timeout)
         setup_ms = (time.perf_counter() - setup_start) * 1000.0
         iterator = iter(loader)
         if torch.version.hip is None:
@@ -228,6 +255,8 @@ def measure(args):
         sums = []
         torch.cuda.synchronize(device)
         start = time.perf_counter()
+        if gate is not None:
+            gate.set()
         for _ in range(args.batches):
             history, future = next(iterator)
             sums.append(history.sum() + future.sum())
@@ -249,7 +278,7 @@ def measure(args):
             raise RuntimeError("loader produced unexpected extra samples")
         count = args.batch_size * args.batches
         byte_count = count * FRAMES * CHANNELS * h * w * 4
-        return {"route": args._route, "setup_ms": setup_ms, "first_batch_ms": first_ms,
+        return {"route": args._route, "gate_prefetch": args.gate_prefetch, "setup_ms": setup_ms, "first_batch_ms": first_ms,
                 "cold_first_batch_ms": cold_first_ms,
                 "timed_batches": args.batches, "samples": count, "elapsed_ms": seconds * 1000.0,
                 "ms_per_batch": seconds * 1000.0 / args.batches, "samples_per_s": count / seconds,
@@ -257,6 +286,8 @@ def measure(args):
                 "logical_gb_per_s": byte_count / seconds / 1e9, "sha256": digest.hexdigest(),
                 "pid": os.getpid(), "torch_version": torch.__version__, "torch_hip_version": torch.version.hip}
     finally:
+        if gate is not None:
+            gate.set()
         loader.close()
 
 
@@ -301,7 +332,10 @@ def run_child(args, route, path, oracle):
            "--_fixture", str(path), "--_oracle", str(oracle), "--library", str(Path(args.library).resolve()),
            "--shape", str(args.shape[0]), str(args.shape[1]), "--batch-size", str(args.batch_size),
            "--batches", str(args.batches), "--device", args.device, "--workers", str(args.workers),
-           "--limit-mib", str(args.limit_mib), "--baseline", args.baseline, "--candidate", args.candidate]
+           "--limit-mib", str(args.limit_mib), "--timeout", str(args.timeout),
+           "--baseline", args.baseline, "--candidate", args.candidate]
+    if args.gate_prefetch:
+        cmd.append("--gate-prefetch")
     result = subprocess_result(args, route, cmd)
     if result["route"] != route:
         raise RuntimeError("subprocess returned the wrong route")
@@ -390,6 +424,7 @@ def main():
                                "batch_size": args.batch_size, "history": HISTORY, "future": FUTURE,
                                "channels": CHANNELS, "workers": args.workers, "timed_batches": args.batches,
                                "windows": args.windows, "abs_error": args.abs_error, "seed": args.seed,
+                               "gate_prefetch": args.gate_prefetch,
                                "device": args.device, "max_fixture_and_output_bytes": args.limit_mib * 1024 * 1024},
                   "results": results,
                   "median_ms_per_batch": medians, "median_first_plus_steady_ms_per_batch": first_plus,
