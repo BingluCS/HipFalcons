@@ -58,16 +58,20 @@ maximum per epoch, so a shorter file ends the epoch earlier and its last batch
 may be partial. By default, the example uses one history frame and one future
 frame, with windows starting at consecutive time indices. `--shuffle` shuffles
 window starts and disables sequential frame reuse; it also works with reader
-processes on either DCU route.
+processes on either DCU route. Shuffled `cpu_stream` stays inline; use
+`--reader-processes 1` or `0` for that combination.
 
-`--reader-processes` specifies the total read-and-pack participants per
-DataLoader worker on `dcu` and `dcu_stream`, including the worker itself.
-The default `1` packs inline with no helpers; `0` is an inline alias. For
-`R > 1`, the worker handles a shard and `R-1` helpers handle the rest. The
-command above therefore uses one worker plus 15 helpers for a single file.
-`cpu_stream` remains single-reader without helpers. Helpers are started by
-the loader's parent before HIP initialization; each participating process
-opens its own HDF5 handle, and helpers do not create GPU contexts. More
+`--reader-processes` specifies total participants per DataLoader worker,
+including the worker itself. The default `1` works inline with no helpers;
+`0` is an inline alias. For `R > 1`, the worker handles a shard and `R-1`
+helpers handle the rest. This is available on `dcu` and `dcu_stream` with or
+without shuffle, and on `cpu_stream` only with `shuffle=False`. The command
+above uses one worker plus 15 helpers. CPU participants decode disjoint planes
+directly into one shared float32 tensor before the usual upload; DCU
+participants pack their planes for reconstruction on the device. The legacy
+`cpu` and `gpu` routes remain inline. Helpers are started by the loader's
+parent before HIP initialization; each participating process opens its own
+HDF5 handle, and helpers do not create GPU contexts. More
 participants can increase startup, CPU and storage contention, host memory
 and `/dev/shm` use; measure the target workload rather than assuming a speedup.
 
@@ -101,6 +105,39 @@ bound to every channel; variables with different units or scales may need a
 different encoding policy. It does not verify every reconstructed chunk or
 guarantee every chunk is compatible with `dcu_stream`.
 
+For a real ERA5 float32 NumPy array in `[T, C, H, W]` order, first create an
+ordinary HDF5 input and then use a per-plane relative bound:
+
+```bash
+python - /data/surface4-era5-20200101-24times-f32.npy /data/era5-2020-f32.h5 <<'PY'
+import sys
+import h5py
+import numpy as np
+
+data = np.load(sys.argv[1], mmap_mode="r", allow_pickle=False)
+if data.ndim != 4 or data.dtype != np.float32:
+    raise ValueError("expected float32 [T, C, H, W]")
+with h5py.File(sys.argv[2], "x") as f:
+    fields = f.create_dataset("fields", shape=data.shape, dtype=np.float32,
+                              chunks=(1, 1, data.shape[2], data.shape[3]))
+    for t in range(data.shape[0]):
+        for c in range(data.shape[1]):
+            fields[t, c] = data[t, c]
+PY
+
+python -m hipfalcons.encode /data/era5-2020-f32.h5 /data/era5-2020-rel.h5 \
+  --dataset fields --library /path/to/build/libfalcons_loader_cpu.so --rel-error 1e-3
+```
+
+`--rel-error 1e-3` means an absolute error bound of
+`1e-3 * (plane_max - plane_min)` for each `(time, channel)` plane. The range
+is computed in float32, and the bound is in that variable's native units; it
+is not a per-value relative bound. This matches the original H5Z-Falcons
+per-chunk REL range for `(1, 1, H, W)` chunks; the converter emits supported
+ABS streams. REL conversion rejects non-finite input or ranges and zero bounds
+rather than silently switching to lossless. In contrast, `--abs-error` uses
+the same absolute bound for every plane. Keep the original for validation.
+
 For an encoder under your control, the native
 [`hf_compress_2d_f32`](../dataloader/codec.cpp) helper shows the configuration:
 `ALGO_INTERP`, `INTERP_ALGO_LINEAR`, `EB_ABS`, a positive absolute error
@@ -122,6 +159,25 @@ for the chosen channels, use `--epochs 1` and set `--steps` to at least
 `ceil((T - 1) / batch_size)`; compare decoded data to the original separately
 to check the error bound. For an incompatible file, use `cpu_stream` if the
 CPU decoder supports its streams, or re-encode.
+The original [H5Z-Falcons documentation](../third_party/Falcons/tools/H5Z-Falcons/README.md)
+describes the broader filter and its per-chunk REL mode; the DCU loader accepts
+only the subset above, not every valid H5Z-Falcons stream.
+
+For a paired sequential comparison on the prepared file:
+
+```bash
+HIP_VISIBLE_DEVICES=0 python -m hipfalcons.calibrate /data/era5-2020-rel.h5 \
+  --library /path/to/build/libhipfalcons_loader.so --history 1 --future 1 \
+  --batch-size 1 --num-workers 1 --channels 0 1 2 3 \
+  --baseline cpu_stream --candidate dcu_stream --reader-processes 8 \
+  --batches 8 --windows 3 --report route.json
+```
+
+The paired sequential routes use the same requested reader count, including
+the worker; the default is `1`. The calibrator defaults to the inline legacy
+`cpu` baseline, so select `--baseline cpu_stream` for matched multi-reader
+calibration. It compares sampled outputs and does not replace
+source-versus-decoded error checks.
 
 ## Lifetime and sizing
 
@@ -150,5 +206,6 @@ additional space. Select only needed channels and size DCU, host and shared
 memory for the actual batch and worker count, not the compressed file size.
 `shared_pool_bytes` only controls reusable slots for inline sequential
 `dcu_stream` packing with `reader_processes=1` or its `0` alias. With
-`reader_processes>1`, independent shared output slabs are used instead, and
-that setting does not limit slab memory or total RAM.
+`reader_processes>1`, DCU routes use independent shared output slabs and
+sequential `cpu_stream` uses shared float32 tensors; that setting does not
+limit either output or total RAM.

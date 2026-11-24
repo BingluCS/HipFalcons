@@ -30,20 +30,48 @@ def _align8(value):
     return (value + 7) & ~7
 
 
+def _decode_cpu_planes(dataset, codec, output, times, channels, first, last, height, width):
+    count = len(times) * len(channels)
+    if (not isinstance(output, torch.Tensor) or output.device.type != "cpu" or
+            output.dtype != torch.float32 or not output.is_contiguous() or not output.is_shared() or
+            tuple(output.shape) != (len(times), len(channels), height, width) or
+            not 0 <= first < last <= count):
+        raise ValueError("invalid CPU reader output range")
+    plane = height * width
+    address = output.data_ptr()
+    plane_bytes = plane * ctypes.sizeof(ctypes.c_float)
+    for i in range(first, last):
+        frame, channel = times[i // len(channels)], channels[i % len(channels)]
+        try:
+            mask, chunk = dataset.id.read_direct_chunk((frame, channel, 0, 0))
+        except Exception as error:
+            raise RuntimeError("Could not read HDF5 chunk at time %d, channel %d"
+                               % (frame, channel)) from error
+        if mask != 0:
+            raise ValueError("Falcons filter was skipped for chunk at time %d, channel %d (mask %d)"
+                             % (frame, channel, mask))
+        if not chunk:
+            raise ValueError("Empty Falcons chunk at time %d, channel %d" % (frame, channel))
+        codec.cpu(chunk, address + i * plane_bytes, plane)
+
+
 def _reader_main(conn, inherited, shutdown, retired, worker_id, owner_pid,
-                 path, name, shape, library):
+                 path, name, shape, library, cpu_decode):
     for other in inherited:
         other.close()
     handle = None
     try:
         # Each helper opens its own dataset and native library after fork.
-        from .fastpack import _native, pack_planes
-        from .loader import _open_dataset
+        from .loader import _Codec, _open_dataset
 
         handle, dataset, actual_shape = _open_dataset(path, name)
         if tuple(actual_shape) != shape:
             raise RuntimeError("HDF5 dataset changed after metadata validation")
-        _native(library)
+        if cpu_decode:
+            codec = _Codec(library, "cpu")
+        else:
+            from .fastpack import _native, pack_planes
+            _native(library)
         conn.send(("ready", os.getpid()))
         worker_pid = None
         while not shutdown.value and not retired[worker_id] and os.getppid() == owner_pid:
@@ -60,15 +88,22 @@ def _reader_main(conn, inherited, shutdown, retired, worker_id, owner_pid,
                 request = conn.recv()
             except EOFError:
                 break
-            (seq, worker_pid, slab, destination, capacity,
-             times, channels, first, last) = request
-            planes = ((times[i // len(channels)], channels[i % len(channels)])
-                      for i in range(first, last))
-            fallback, offsets, groups, used = pack_planes(
-                dataset, planes, shape[2], shape[3], library,
-                destination=(slab.data_ptr() + destination, capacity))
-            conn.send(("packed", seq, offsets, groups, used, fallback))
-            del request, slab, fallback
+            if cpu_decode:
+                seq, worker_pid, output, times, channels, first, last = request
+                _decode_cpu_planes(dataset, codec, output, times, channels, first, last,
+                                   shape[2], shape[3])
+                conn.send(("decoded", seq))
+                del request, output
+            else:
+                (seq, worker_pid, slab, destination, capacity,
+                 times, channels, first, last) = request
+                planes = ((times[i // len(channels)], channels[i % len(channels)])
+                          for i in range(first, last))
+                fallback, offsets, groups, used = pack_planes(
+                    dataset, planes, shape[2], shape[3], library,
+                    destination=(slab.data_ptr() + destination, capacity))
+                conn.send(("packed", seq, offsets, groups, used, fallback))
+                del request, slab, fallback
     except BaseException:
         try:
             conn.send(("error", traceback.format_exc()[-16384:]))
@@ -84,7 +119,7 @@ class ReaderPool:
     """Parent-started helpers; reader_processes includes the DataLoader worker."""
 
     def __init__(self, context, path, dataset_name, shape, cpu_library,
-                 num_workers, reader_processes):
+                 num_workers, reader_processes, *, cpu_decode=False):
         if context.get_start_method() != "fork":
             raise ValueError("ReaderPool requires a fork multiprocessing context")
         self._context = context
@@ -94,6 +129,7 @@ class ReaderPool:
         if len(self._shape) != 4:
             raise ValueError("shape must be (time, channel, height, width)")
         self._library = os.fspath(cpu_library)
+        self._cpu_decode = cpu_decode
         self._num_workers = _positive_int("num_workers", num_workers)
         self._reader_processes = _positive_int("reader_processes", reader_processes)
         if self._reader_processes <= 1:
@@ -127,7 +163,7 @@ class ReaderPool:
                         target=_reader_main,
                         args=(reader_end, tuple(connections) + (worker_end,), self._shutdown,
                               self._retired, worker_id, self._owner_pid, self._path, self._name,
-                              self._shape, self._library), daemon=True)
+                              self._shape, self._library, self._cpu_decode), daemon=True)
                     try:
                         process.start()
                     except BaseException:
@@ -210,6 +246,44 @@ class ReaderPool:
         self._in_pack = True
         try:
             return self._pack(connections, tuple(map(int, times)), tuple(map(int, channels)), dataset)
+        except BaseException:
+            self._retired[self._worker_id] = 1
+            for conn in connections:
+                conn.close()
+            raise
+        finally:
+            self._in_pack = False
+
+    def decode_cpu(self, times, channels, dataset, codec, output):
+        if not self._cpu_decode:
+            raise RuntimeError("ReaderPool was not started for CPU decoding")
+        connections = self._worker()
+        if self._in_pack:
+            raise RuntimeError("concurrent reader calls in one worker are unsupported")
+        times, channels = tuple(times), tuple(channels)
+        if not times or not channels:
+            raise ValueError("cannot decode an empty set of planes")
+        self._in_pack = True
+        try:
+            count = len(times) * len(channels)
+            participants = min(self._reader_processes, count)
+            quotient, remainder = divmod(count, participants)
+            self._sequence += 1
+            seq = self._sequence
+            pending = {}
+            for i, conn in enumerate(connections[:participants - 1], 1):
+                first = i * quotient + min(i, remainder)
+                last = first + quotient + (i < remainder)
+                conn.send((seq, os.getpid(), output, times, channels, first, last))
+                pending[conn] = None
+            _decode_cpu_planes(dataset, codec, output, times, channels, 0,
+                               quotient + (remainder != 0), self._shape[2], self._shape[3])
+            pending = {conn: time.monotonic() + _TIMEOUT for conn in pending}
+            while pending:
+                for conn, message in self._receive(pending):
+                    if message != ("decoded", seq):
+                        raise RuntimeError("invalid CPU reader response")
+                    del pending[conn]
         except BaseException:
             self._retired[self._worker_id] = 1
             for conn in connections:

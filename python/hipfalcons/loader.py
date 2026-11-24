@@ -510,6 +510,11 @@ class _ChunkBatches(Dataset):
                 from .fastpack import pack_times
                 payload = self._pack_stream_times(pack_times, dataset, indices[0], times,
                                                   height, width, generation)
+        elif self._readers is not None:
+            if self._codec is None:
+                self._codec = _Codec(self.library_path, "cpu")
+            payload = _shared_float_frames(len(times), len(self.channels), height, width)
+            self._readers.decode_cpu(times, self.channels, dataset, self._codec, payload)
         else:
             if self._codec is None:
                 self._codec = _Codec(self.library_path, "cpu")
@@ -701,7 +706,8 @@ class ERA5Loader:
     CUDA-namespace device such as ``'cuda:0'`` on ROCm; ``num_workers`` must be
     positive. ``reader_processes`` counts the worker itself: 1 (default) packs
     inline, 8 packs on the worker plus 7 helpers. The old value 0 also means
-    inline. Only ``dcu`` and ``dcu_stream`` support more than one reader.
+    inline. More than one reader is supported by ``dcu``, ``dcu_stream``, and
+    sequential ``cpu_stream``.
     ``shared_pool_bytes`` bounds the reusable sequential ``dcu_stream`` IPC
     pool for inline packing; independent reader groups use per-batch shared
     slabs. ``channels`` is an optional sequence of unique source-channel
@@ -726,8 +732,9 @@ class ERA5Loader:
             raise ValueError("route must be 'cpu', 'gpu', 'dcu', 'cpu_stream' or 'dcu_stream'")
         if not isinstance(reader_processes, int) or isinstance(reader_processes, bool) or reader_processes < 0:
             raise ValueError("reader_processes must be a nonnegative integer")
-        if reader_processes > 1 and route not in ("dcu", "dcu_stream"):
-            raise ValueError("reader_processes > 1 requires route='dcu' or 'dcu_stream'")
+        if (reader_processes > 1 and route not in ("dcu", "dcu_stream") and
+                (route != "cpu_stream" or shuffle)):
+            raise ValueError("reader_processes > 1 requires dcu, dcu_stream, or sequential cpu_stream")
         for name, value in (("num_workers", num_workers), ("batch_size", batch_size),
                             ("history", history), ("future", future)):
             if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
@@ -818,7 +825,8 @@ class ERA5Loader:
         if self.reader_processes > 1:
             from .readers import ReaderPool
             readers = ReaderPool(context, self.path, self.dataset, shape, self.cpu_library_path,
-                                 self.num_workers, self.reader_processes)
+                                 self.num_workers, self.reader_processes,
+                                 cpu_decode=worker_route == "cpu_stream")
         elif self._streaming and worker_route == "dcu_stream" and self.shared_pool_bytes:
             pool = _SharedBatchPool.create(context, self.shared_pool_bytes, self.num_workers,
                                            self.batch_size, len(channels), shape[2], shape[3])

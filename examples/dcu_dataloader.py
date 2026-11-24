@@ -34,12 +34,14 @@ def parse_args():
                         help="one decode route for all workers (default: dcu_stream)")
     parser.add_argument("--num-workers", type=positive_int, default=2, help="fork workers (default: 2)")
     parser.add_argument("--reader-processes", type=nonnegative_int, default=1,
-                        help="total CPU readers including the worker (default: 1; 0 aliases 1)")
+                        help="participants per worker, including the worker (default: 1; 0 aliases 1); "
+                             ">1 requires dcu/dcu_stream or unshuffled cpu_stream")
     parser.add_argument("--batch-size", type=positive_int, default=2, help="windows per batch (default: 2)")
     parser.add_argument("--epochs", type=positive_int, default=2, help="number of epochs (default: 2)")
     parser.add_argument("--steps", type=positive_int, default=4, help="maximum batches per epoch (default: 4)")
     parser.add_argument("--channels", type=int, nargs="+", help="source channel indices in output order")
-    parser.add_argument("--shuffle", action="store_true", help="shuffle window starts each epoch")
+    parser.add_argument("--shuffle", action="store_true",
+                        help="shuffle window starts; cpu_stream then requires 0 or 1 readers")
     args = parser.parse_args()
 
     if sys.platform != "linux":

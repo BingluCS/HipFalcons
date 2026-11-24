@@ -52,7 +52,7 @@ def arguments():
     parser.add_argument("--extra", choices=("cpu_stream",), help="also measure this control route")
     parser.add_argument("--workers", type=int, default=2, help="DataLoader fork workers per route")
     parser.add_argument("--reader-processes", type=int, default=1,
-                        help="total readers per worker including the worker (default: 1; 0 aliases 1; controls use 1)")
+                        help="total readers per worker for cpu_stream, dcu and dcu_stream (default: 1; 0 aliases 1)")
     parser.add_argument("--gate-prefetch", action="store_true",
                         help="allow only the warmup batch to be prefetched before timing starts")
     parser.add_argument("--limit-mib", type=int, default=MAX_BYTES // (1024 * 1024),

@@ -13,7 +13,7 @@ the requested full timed batches. It times synchronized DataLoader-to-device
 delivery plus a small GPU reduction. No model is timed. The subprocesses set
 OMP_NUM_THREADS, OPENBLAS_NUM_THREADS, MKL_NUM_THREADS and NUMEXPR_NUM_THREADS
 to 1; num-workers controls DataLoader parallelism. Optional reader processes
-are configured per DataLoader worker for DCU routes only.
+are configured per worker for cpu_stream, dcu and dcu_stream.
 The result is a short, warm-prefetched calibration, not a general performance
 guarantee; cache state, worker count, workload, and shared load matter.
 Optional sampled comparisons retain whole device batches until after timing;
@@ -63,7 +63,7 @@ def parse_args():
     p.add_argument("--candidate", choices=("gpu", "dcu", "dcu_stream"), default="dcu_stream")
     p.add_argument("--num-workers", type=int, default=2)
     p.add_argument("--reader-processes", type=int, default=1,
-                   help="total readers per worker including the worker (default: 1; 0 aliases 1; controls use 1)")
+                   help="total readers per worker for cpu_stream, dcu and dcu_stream (default: 1; 0 aliases 1)")
     p.add_argument("--device", default="cuda:0", help="PyTorch ROCm/HIP device")
     p.add_argument("--verify-batches", type=int, default=1, help="number of full timed batches to compare (0..3)")
     p.add_argument("--timeout", type=float, default=600, help="seconds per subprocess")

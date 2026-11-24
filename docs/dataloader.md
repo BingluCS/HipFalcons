@@ -23,6 +23,9 @@ rewrite it or change its error bound, and your existing CPU reader can
 continue reading it. If the layout matches but the codec is unsupported
 on the DCU, select `route="cpu_stream"` if the bundled CPU decoder handles
 that stream. This is an explicit CPU path, not automatic per-chunk fallback.
+The original [H5Z-Falcons filter](../third_party/Falcons/tools/H5Z-Falcons/README.md)
+supports more configurations than the DCU subset; filter ID 40024 or a
+successful ordinary HDF5 read alone does not establish DCU compatibility.
 
 ## Convert an ordinary HDF5 file
 
@@ -43,6 +46,25 @@ python -m hipfalcons.encode era5-raw.h5 era5-falcons.h5 --dataset fields \
 HIP_VISIBLE_DEVICES=0 python examples/dcu_dataloader.py --input era5-falcons.h5 \
     --library build/libhipfalcons_loader.so --channels 0 1 2 3
 ```
+
+For real ERA5 variables with different units and scales, a relative bound can
+be more useful than one scalar ABS bound:
+
+```bash
+python -m hipfalcons.encode /data/era5-2020-f32.h5 /data/era5-2020-rel.h5 \
+    --dataset fields --library build/libfalcons_loader_cpu.so --rel-error 1e-3
+```
+
+Here `--rel-error 1e-3` selects a separate absolute bound of
+`1e-3 * (plane_max - plane_min)` for each `(time, channel)` plane, with
+the range computed in float32 and the bound in that variable's native units.
+It is not a per-value relative error bound. For example, temperature may be
+in K while pressure is in Pa. The converter rejects non-finite input or ranges
+and zero bounds in REL mode rather than silently switching to lossless.
+This per-plane range corresponds to the original H5Z-Falcons per-chunk REL
+definition for `(1, 1, H, W)` chunks; the converter emits supported ABS streams.
+The earlier `--abs-error` command instead uses the same absolute bound for
+every plane. Retain the original data and independently validate errors.
 
 ## Python API
 
@@ -82,7 +104,7 @@ in each of the four DataLoader workers, with no additional reader processes.
 | `channels` | Zero-based indices in output order, with no duplicates. Omit for all channels. |
 | `batch_size`, `drop_last` | Number of windows per batch. With the default `drop_last=False`, the final batch can be smaller. |
 | `num_workers` | Positive number of CPU fork workers preparing different batches. It does not set a DCU thread count. |
-| `reader_processes` | Total CPU read-and-pack participants per DataLoader worker on `dcu` and `dcu_stream`, including the worker itself. The default `1` packs inline with no helpers; `0` is an inline alias. For `R > 1`, the worker participates alongside `R-1` helpers, including with `shuffle=True`. CPU and legacy GPU routes remain single-reader without helpers. |
+| `reader_processes` | Total participants per DataLoader worker, including the worker itself. `1` (default) and `0` use the inline path. For `R > 1`, the worker and `R-1` helpers read and pack on `dcu`/`dcu_stream`, with or without shuffle, or read and decode on sequential `cpu_stream` with `shuffle=False`. Legacy `cpu`/`gpu` and shuffled `cpu_stream` use the inline path; select `0` or `1` for those routes. |
 | `route` | `dcu` and `dcu_stream` run interpolation on the DCU; `cpu_stream` reconstructs on the CPU, then uploads floats. All return DCU tensors. |
 
 Returned shapes are `[B, history, C_selected, H, W]` and
@@ -99,15 +121,26 @@ training reader are not supplied by this API.
 
 With the default `reader_processes=1` on a DCU route, each worker opens its
 own HDF5 handle and packs its batches inline; `0` selects the same path.
-Larger values add helpers while the worker also reads and packs a shard.
-CPU and legacy GPU routes remain single-reader without helpers. The training
+Larger values add helpers while the worker also processes a shard. On
+sequential `cpu_stream`, participants decode disjoint planes directly into one
+shared float32 tensor, which follows the existing CPU-to-DCU upload path.
+Legacy `cpu` and `gpu` routes remain inline without helpers. The training
 process owns the HIP stream; `num_workers` does not set a DCU thread count.
-For sequential training, `dcu_stream` keeps overlapping time frames on the
-DCU and reads only the new frames.
+For sequential training, `cpu_stream` and `dcu_stream` keep overlapping time
+frames on the DCU and read only the new frames.
 `shuffle=True` disables reuse between batches, but still supports reader
-processes on `dcu` and `dcu_stream`. For per-variable normalization, pass
-both `mean` and `std` in selected-channel order; normalization runs on the
-device.
+processes on `dcu` and `dcu_stream`. Shuffled `cpu_stream` uses the inline
+CPU path; use `reader_processes=1` or `0`. For per-variable normalization,
+pass both `mean` and `std` in selected-channel order; normalization runs on
+the device.
+
+For example, run a sequential CPU baseline with eight participants per worker:
+
+```bash
+HIP_VISIBLE_DEVICES=0 python examples/dcu_dataloader.py --input era5-falcons.h5 \
+    --library build/libhipfalcons_loader.so --route cpu_stream --num-workers 1 \
+    --reader-processes 8 --batch-size 1 --channels 0 1 2 3
+```
 
 ## Reader processes
 
@@ -130,10 +163,11 @@ with ERA5Loader(
         history, target = next(batches)
 ```
 
-For a DCU route and `R > 1`, the loader's parent creates `R-1` helpers per
-worker before HIP initialization; the worker itself also reads and packs.
+For a DCU route or sequential `cpu_stream` and `R > 1`, the loader's parent
+creates `R-1` helpers per worker before HIP initialization; the worker itself
+also reads and packs or decodes its own shard.
 For example, `reader_processes=8` uses one worker and seven helpers; two
-workers with `reader_processes=8` provide 16 read-and-pack participants,
+workers with `reader_processes=8` provide 16 participants,
 including 14 additional helpers. Each participating process opens its own
 HDF5 handle; handles are not shared across processes. The configured count
 is not necessarily the number active in a batch: a batch with fewer chunks
@@ -149,10 +183,10 @@ reusable IPC pool for **inline**, sequential `dcu_stream` packing
 (`reader_processes=1` or `0`, `shuffle=False`), which is the default
 participant configuration. Too-large or busy pool slots fall back to
 per-batch shared memory. Set `shared_pool_bytes=0` to disable this pool
-without disabling frame reuse. With `reader_processes>1`, packing instead
-uses independent shared output slabs; it does not use those reusable pool
-slots, and `shared_pool_bytes` does not limit their size or total RAM.
-Prefetch and multiple workers can increase the number of live slabs.
+without disabling frame reuse. With `reader_processes>1` on a DCU route,
+packing instead uses independent shared output slabs. Sequential `cpu_stream`
+uses shared float32 tensors. Neither is limited by `shared_pool_bytes`.
+Prefetch and multiple workers can increase the number of live outputs.
 
 One input/target pair with all 257 ERA5 channels at `721 x 1440` occupies
 roughly 2 GiB **just for the returned tensors**, not counting processes,
@@ -170,13 +204,15 @@ HIP_VISIBLE_DEVICES=0 python -m hipfalcons.calibrate era5-falcons.h5 \
 ```
 
 Use the report's `winner` as `route` when the training batch layout and
-worker and reader-participant counts match the calibration. On `dcu` and
-`dcu_stream`, `--reader-processes` defaults to `1` for inline packing; `0`
-is an inline alias, while `R > 1` adds `R-1` helpers per worker. CPU and
-legacy GPU routes remain single-reader without helpers. The report records
-the configuration per route, not a count of participants active on every
-batch. In this example the DCU worker uses 15 extra helpers. The utility
-checks representative batches; it cannot guarantee that untested chunks use
-a supported mode.
+worker and reader-participant counts match the calibration. Calibration runs
+without shuffle. For the explicit `cpu_stream`/`dcu_stream` pair above,
+both routes use the requested `--reader-processes` count, which defaults to
+`1`; `0` is an inline alias. Each worker in this example uses 15 helpers.
+The calibrator's default baseline is legacy `cpu`, which remains inline;
+specify `--baseline cpu_stream` for a matched multi-reader comparison. The
+legacy `gpu` control also remains inline. The report records the configuration
+per route, not a count of participants active on every batch.
+The utility checks representative batches; it cannot guarantee that untested
+chunks use a supported mode.
 The [runnable example](../examples/README.md) shows complete training code,
 including resource cleanup.

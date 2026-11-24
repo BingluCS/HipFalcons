@@ -10,6 +10,11 @@ file format do not change. The loader does not require the HDF5 filter plugin
 for reading, because it reads the stored chunk bytes instead of invoking h5py
 slicing.
 
+For a compatible [CPU Falcons](third_party/README.md) file, use the existing
+HDF5 dataset directly; no recompression or replacement of your original reader
+is needed. For an uncompressed float32 dataset, the [HDF5 conversion guide](docs/dataloader.md#convert-an-ordinary-hdf5-file)
+shows how to select a fixed ABS or per-chunk REL bound.
+
 The repository also has a [standalone HIP codec](codec/README.md) for
 CPU-compatible Falcons interpolation compression and decompression. It is a
 separate build target and does not change the HDF5 or Python reader.
@@ -100,17 +105,36 @@ HIP_VISIBLE_DEVICES=0 python examples/dcu_dataloader.py --input fields.h5 \
     --num-workers 1 --reader-processes 16
 ```
 
-For `dcu` and `dcu_stream`, `reader_processes` counts the **total CPU
-read-and-pack participants per DataLoader worker**, including the worker
-itself and with `--shuffle`. The default `1` packs inline without extra
-processes; `0` remains an alias for inline packing. With `R > 1`, the worker
-handles a shard and `R-1` helper processes handle the rest: the example above
-uses the worker plus 15 helpers. CPU and legacy GPU routes remain
-single-reader without helpers. Each participating process opens its own HDF5
+On `dcu`, `dcu_stream`, and sequential `cpu_stream`, `reader_processes` counts
+the **total CPU readers per DataLoader worker**, including the worker itself.
+The default `1` uses no helpers; `0` is an alias for `1`. The example above
+uses one worker plus 15 helpers, not 16 extra workers. To compare with the
+original Falcons CPU decoder, change only `--route dcu_stream` to
+`--route cpu_stream`: readers decode their chunks into a shared float32
+buffer and the training process uploads the frames. Multiple readers with
+`--shuffle` are supported on the DCU routes only. Each reader opens its own HDF5
 handle, and helpers do not create GPU contexts. Additional processes can
 increase CPU, host-memory and `/dev/shm` use; measure the workload and size
 resources accordingly. See [reader process tuning](docs/dataloader.md#reader-processes)
 for lifecycle and memory details.
+
+## Performance on real ERA5
+
+On one BW150 with one worker and **8 readers**, the following times measure
+delivery from a warm HDF5 file to ready device tensors. Both routes read
+the same CPU Falcons streams and return one history frame and one target frame.
+
+| Real ERA5 input (0.25-degree grid) | File CR | CPU decode + upload | CPU unpack + DCU reconstruction | Speedup |
+| --- | ---: | ---: | ---: | ---: |
+| 4 surface fields, 24 time steps | 16.65x | 11.21 ms/sample | 8.16 ms/sample | 1.37x |
+| Same fields + temperature at 13 pressure levels, 10 time steps | 24.33x | 35.55 ms/sample | 22.45 ms/sample | 1.58x |
+
+The CPU encoder used a per-chunk tolerance of `1e-3 * (max - min)`, as in
+[Falcons HDF5 REL mode](third_party/Falcons/tools/H5Z-Falcons/README.md).
+All 266 planes met that bound; device outputs matched the native CPU decoder
+bit for bit. Going from 8 to 16 readers gave no consistent benefit on
+these subsets. These are not training, cold-disk or full 257-channel results.
+[All reader counts, data source and timings](docs/performance.md#real-era5).
 
 ## Supported Streams
 

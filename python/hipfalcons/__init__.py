@@ -9,8 +9,8 @@ __all__ = ["ERA5Loader"]
 
 
 def _route_readers(route, requested):
-    # Paired benchmarks use one inline reader for non-hybrid control routes.
-    return max(1, requested) if route in ("dcu", "dcu_stream") else 1
+    # Both benchmarks use sequential windows; compare like-for-like reader counts.
+    return max(1, requested) if route in ("cpu_stream", "dcu", "dcu_stream") else 1
 
 
 def __getattr__(name):

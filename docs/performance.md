@@ -3,7 +3,49 @@
 For the standalone codec and its separate reader regression check, see the
 [BW150 before/after measurements](codec-performance.md).
 
-## Reader count including the worker
+## Real ERA5
+
+These inputs are real [WeatherBench 2 ERA5 reanalysis](https://weatherbench2.readthedocs.io/en/latest/data-guide.html)
+fields, not synthetic replicas. Both subsets start at 2020-01-01 00:00 UTC
+and use consecutive six-hourly fields on the global 721 x 1440 grid.
+The smaller channel set contains 2 m temperature, 10 m U/V wind and mean
+sea-level pressure (24 time steps). The wider set adds temperature at all
+13 pressure levels from 50 to 1000 hPa (10 time steps).
+
+| Channels | Readers per worker | CPU decode + upload (ms/sample) | DCU route (ms/sample) | CPU time / DCU time |
+| ---: | ---: | ---: | ---: | ---: |
+| 4 | 1 | 32.15 | 17.06 | 1.88x |
+| 4 | 8 | 11.21 | 8.16 | 1.37x |
+| 4 | 16 | 11.33 | 8.20 | 1.38x |
+| 17 | 1 | 133.72 | 77.40 | 1.73x |
+| 17 | 8 | 35.55 | 22.45 | 1.58x |
+| 17 | 16 | 34.53 | 22.01 | 1.57x |
+
+One BW150, 16 host cores, one fork worker, batch size one. Both routes start
+at the same warm HDF5 file and end with a synchronized reduction on the
+device. Sequential samples reuse one frame; each timed batch reads one new
+frame. Each row is the median of three runs with one warm-up batch and gated
+prefetch, timing 22 batches (4 channels) or 8 (17 channels) per run.
+The CPU multi-reader measurements used the sequential reader implementation
+subsequently integrated into this package; reconstruction calls the bundled
+Falcons CPU decoder. The DCU route decodes entropy on the CPU. Neither model
+training nor cold-storage bandwidth is measured here.
+
+File CR is uncompressed float32 bytes divided by the entire compressed HDF5
+file size: 398,684,160 / 23,942,640 = **16.65x** and 706,003,200 / 29,023,011
+= **24.33x**, respectively. All 266 planes met the per-plane range-relative
+bound of `1e-3`, and every returned tensor matched the CPU reconstruction
+bit for bit. The small difference between 8 and 16 readers is within the
+observed run-to-run variation. [Per-run timings, hashes and channel errors](../results/bw150-real-era5-20261124.json)
+
+The timing harness subtracted the float32 extrema in double precision. The
+released converter's `--rel-error` subtracts them in float32, as CPU Falcons
+does, so it need not reproduce those compressed bytes exactly. In a separate
+release check, the native CPU decoder recovered all 85 planes of a five-step,
+17-channel subset within their per-plane bounds. At eight readers, three
+timed batches from the released CPU and DCU routes matched bit for bit.
+
+## Synthetic reader-count comparison
 
 One BW150, one DataLoader worker, CPU affinity 0-15, batch size one.
 Each sample returns one history and one target frame. The worker reads and
@@ -156,8 +198,9 @@ To evaluate a different number of CPU readers, change `--workers 4` to
 choose another nonnegative reader count). Omitted, the count defaults to one
 read-and-pack participant per DataLoader worker for `dcu` and `dcu_stream`:
 the worker itself, inline. `0` is an inline alias. For `R > 1`, the worker
-participates alongside `R-1` helpers; CPU and legacy GPU routes remain
-single-reader without helpers. The output and report record the configuration
+participates alongside `R-1` helpers. The sequential `cpu_stream` baseline
+uses the same reader count; legacy `cpu` and `gpu` routes stay inline.
+The output and report record the configuration
 per route; fewer participants may be active when a batch has fewer chunks.
 Helpers consume additional processes, host memory and shared-memory slabs,
 and the best setting depends on the workload and available resources.
