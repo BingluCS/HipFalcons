@@ -50,6 +50,8 @@ def arguments():
     parser.add_argument("--candidate", choices=("gpu", "dcu", "dcu_stream"), default="dcu_stream")
     parser.add_argument("--extra", choices=("cpu_stream",), help="also measure this control route")
     parser.add_argument("--workers", type=int, default=2, help="DataLoader fork workers per route")
+    parser.add_argument("--reader-processes", type=int, default=0,
+                        help="CPU readers per worker for dcu/dcu_stream (default: 0; other routes use 0)")
     parser.add_argument("--gate-prefetch", action="store_true",
                         help="allow only the warmup batch to be prefetched before timing starts")
     parser.add_argument("--limit-mib", type=int, default=MAX_BYTES // (1024 * 1024),
@@ -78,6 +80,8 @@ def arguments():
         parser.error("extra must differ from baseline and candidate")
     if args.workers < 1:
         parser.error("workers must be positive")
+    if args.reader_processes < 0:
+        parser.error("reader-processes must be nonnegative")
     if args.limit_mib < 1:
         parser.error("limit-mib must be positive")
     if not (math.isfinite(args.abs_error) and args.abs_error > 0):
@@ -221,10 +225,11 @@ def measure(args):
     samples = args.batch_size * (args.batches + 1)
     if oracle.shape != (samples + FRAMES - 1, CHANNELS, h, w) or oracle.dtype != np.dtype("<f4"):
         raise RuntimeError("CPU oracle has an unexpected shape or dtype")
+    reader_processes = args.reader_processes if args._route in ("dcu", "dcu_stream") else 0
     loader = ERA5Loader(args._fixture, library_path=str(Path(args.library).resolve()), route=args._route,
                         device=args.device, num_workers=args.workers, batch_size=args.batch_size,
                         history=HISTORY, future=FUTURE, dataset="fields", mean=None, std=None,
-                        shuffle=False, drop_last=True)
+                        shuffle=False, drop_last=True, reader_processes=reader_processes)
     setup_start = time.perf_counter()
     gate = mp.get_context("fork").Event() if args.gate_prefetch else None
     try:
@@ -278,7 +283,8 @@ def measure(args):
             raise RuntimeError("loader produced unexpected extra samples")
         count = args.batch_size * args.batches
         byte_count = count * FRAMES * CHANNELS * h * w * 4
-        return {"route": args._route, "gate_prefetch": args.gate_prefetch, "setup_ms": setup_ms, "first_batch_ms": first_ms,
+        return {"route": args._route, "reader_processes": reader_processes,
+                "gate_prefetch": args.gate_prefetch, "setup_ms": setup_ms, "first_batch_ms": first_ms,
                 "cold_first_batch_ms": cold_first_ms,
                 "timed_batches": args.batches, "samples": count, "elapsed_ms": seconds * 1000.0,
                 "ms_per_batch": seconds * 1000.0 / args.batches, "samples_per_s": count / seconds,
@@ -332,6 +338,7 @@ def run_child(args, route, path, oracle):
            "--_fixture", str(path), "--_oracle", str(oracle), "--library", str(Path(args.library).resolve()),
            "--shape", str(args.shape[0]), str(args.shape[1]), "--batch-size", str(args.batch_size),
            "--batches", str(args.batches), "--device", args.device, "--workers", str(args.workers),
+           "--reader-processes", str(args.reader_processes),
            "--limit-mib", str(args.limit_mib), "--timeout", str(args.timeout),
            "--baseline", args.baseline, "--candidate", args.candidate]
     if args.gate_prefetch:
@@ -339,6 +346,9 @@ def run_child(args, route, path, oracle):
     result = subprocess_result(args, route, cmd)
     if result["route"] != route:
         raise RuntimeError("subprocess returned the wrong route")
+    effective_readers = args.reader_processes if route in ("dcu", "dcu_stream") else 0
+    if result.get("reader_processes") != effective_readers:
+        raise RuntimeError("subprocess returned the wrong reader process count")
     return result
 
 
@@ -392,6 +402,7 @@ def main():
         path, oracle, details = build_fixture(args, Path(tmp))
         print("fixture " + json.dumps(details, sort_keys=True), flush=True)
         print(f"workload batch={args.batch_size} frames={FRAMES} channels={CHANNELS} workers={args.workers} "
+              f"requested_reader_processes={args.reader_processes} "
               f"timed_batches={args.batches} windows={args.windows} device={args.device} "
               f"per_fixture_and_output_limit_MiB={args.limit_mib}", flush=True)
         expected_hash = None
@@ -405,7 +416,8 @@ def main():
                 elif result["sha256"] != expected_hash:
                     raise RuntimeError(f"{route} full-output hash differs from the verified baseline")
                 results[route].append(result)
-                print(f"window={window + 1} route={route} worker_setup_ms={result['setup_ms']:.3f} "
+                print(f"window={window + 1} route={route} reader_processes={result['reader_processes']} "
+                      f"worker_setup_ms={result['setup_ms']:.3f} "
                       f"first_batch_ms={result['first_batch_ms']:.3f} "
                       f"cold_first_batch_ms={result['cold_first_batch_ms']:.3f} "
                       f"first_plus_steady_ms_per_batch={result['first_plus_steady_ms_per_batch']:.3f} "
@@ -423,6 +435,10 @@ def main():
                   "workload": {"height": args.shape[0], "width": args.shape[1],
                                "batch_size": args.batch_size, "history": HISTORY, "future": FUTURE,
                                "channels": CHANNELS, "workers": args.workers, "timed_batches": args.batches,
+                               "requested_reader_processes": args.reader_processes,
+                               "reader_processes_by_route": {
+                                   route: args.reader_processes if route in ("dcu", "dcu_stream") else 0
+                                   for route in routes},
                                "windows": args.windows, "abs_error": args.abs_error, "seed": args.seed,
                                "gate_prefetch": args.gate_prefetch,
                                "device": args.device, "max_fixture_and_output_bytes": args.limit_mib * 1024 * 1024},

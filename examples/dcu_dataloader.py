@@ -15,6 +15,13 @@ def positive_int(value):
     return result
 
 
+def nonnegative_int(value):
+    result = int(value)
+    if result < 0:
+        raise argparse.ArgumentTypeError("must be a nonnegative integer")
+    return result
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
@@ -23,13 +30,16 @@ def parse_args():
     parser.add_argument("--library", required=True, type=Path, help="native HIP codec shared library")
     parser.add_argument("--dataset", default="fields", help="HDF5 dataset path (default: fields)")
     parser.add_argument("--device", default="cuda:0", help="PyTorch HIP device (default: cuda:0)")
-    parser.add_argument("--route", choices=("cpu_stream", "dcu_stream"), default="dcu_stream",
+    parser.add_argument("--route", choices=("cpu_stream", "dcu", "dcu_stream"), default="dcu_stream",
                         help="one decode route for all workers (default: dcu_stream)")
     parser.add_argument("--num-workers", type=positive_int, default=2, help="fork workers (default: 2)")
+    parser.add_argument("--reader-processes", type=nonnegative_int, default=0,
+                        help="CPU readers per worker for dcu/dcu_stream (default: 0; cpu_stream uses 0)")
     parser.add_argument("--batch-size", type=positive_int, default=2, help="windows per batch (default: 2)")
     parser.add_argument("--epochs", type=positive_int, default=2, help="number of epochs (default: 2)")
     parser.add_argument("--steps", type=positive_int, default=4, help="maximum batches per epoch (default: 4)")
     parser.add_argument("--channels", type=int, nargs="+", help="source channel indices in output order")
+    parser.add_argument("--shuffle", action="store_true", help="shuffle window starts each epoch")
     args = parser.parse_args()
 
     if sys.platform != "linux":
@@ -66,18 +76,20 @@ def train(args, path):
     import torch
     from hipfalcons import ERA5Loader
 
+    reader_processes = args.reader_processes if args.route in ("dcu", "dcu_stream") else 0
     loader = ERA5Loader(
         path,
         library_path=args.library,
         route=args.route,
         device=args.device,
         num_workers=args.num_workers,
+        reader_processes=reader_processes,
         batch_size=args.batch_size,
         history=1,
         future=1,
         dataset=args.dataset,
         channels=args.channels,
-        shuffle=False,
+        shuffle=args.shuffle,
         drop_last=False,
     )
     try:
@@ -95,7 +107,8 @@ def train(args, path):
         optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
         loss_fn = torch.nn.MSELoss()
         model.train()
-        print(f"route={args.route} shape={loader.shape} channels={loader.channels} device={device}", flush=True)
+        print(f"route={args.route} reader_processes={reader_processes} shuffle={args.shuffle} "
+              f"shape={loader.shape} channels={loader.channels} device={device}", flush=True)
 
         for epoch in range(1, args.epochs + 1):
             iterator = iter(loader)

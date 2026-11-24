@@ -78,7 +78,8 @@ with ERA5Loader(
 | `channels` | Zero-based indices in output order, with no duplicates. Omit for all channels. |
 | `batch_size`, `drop_last` | Number of windows per batch. With the default `drop_last=False`, the final batch can be smaller. |
 | `num_workers` | Positive number of CPU fork workers preparing different batches. It does not set a DCU thread count. |
-| `route` | `dcu_stream` runs interpolation on the DCU; `cpu_stream` reconstructs on the CPU, then uploads floats. Both return DCU tensors. |
+| `reader_processes` | Nonnegative number of additional CPU chunk readers per DataLoader worker; defaults to `0`. A positive value requires `dcu` or `dcu_stream`, including when `shuffle=True`. |
+| `route` | `dcu` and `dcu_stream` run interpolation on the DCU; `cpu_stream` reconstructs on the CPU, then uploads floats. All return DCU tensors. |
 
 Returned shapes are `[B, history, C_selected, H, W]` and
 `[B, future, C_selected, H, W]`. For the example above and
@@ -92,33 +93,77 @@ closes all workers. It returns only `(history, target)`; time stamps,
 sample indices, auxiliary features and custom samplers from an existing
 training reader are not supplied by this API.
 
-Each worker opens its own HDF5 handle and prepares different batches; the
-training process owns the HIP stream. `num_workers` is the number of CPU
-processes, not DCU threads or additional pools of decompression processes.
-For sequential training, `dcu_stream` keeps the overlapping time frames on
-the DCU and reads only the new frames. `shuffle=True` disables reuse between
-batches. For per-variable normalization, pass both `mean` and `std` in
-selected-channel order; normalization runs on the device.
+With the default `reader_processes=0`, each worker opens its own HDF5 handle
+and prepares different batches. The training process owns the HIP stream;
+`num_workers` does not set a DCU thread count. For sequential training,
+`dcu_stream` keeps overlapping time frames on the DCU and reads only the new
+frames. `shuffle=True` disables reuse between batches, but still supports
+reader processes on `dcu` and `dcu_stream`. For per-variable normalization,
+pass both `mean` and `std` in selected-channel order; normalization runs on
+the device.
 
-For sequential `dcu_stream`, `shared_pool_bytes` defaults to 64 MiB per
-loader. Too-large or busy slots fall back to per-batch shared memory.
-Use `shared_pool_bytes=0` to turn the pool off without disabling frame
-reuse. One input/target pair with all 257 ERA5 channels at `721 x 1440`
-occupies roughly 2 GiB **just for the returned tensors**, not counting
-workers, pinned buffers, reuse buffers, the model, or gradients. Start
-with a subset of channels and tune both device and `/dev/shm` usage.
+## Reader processes
+
+For one HDF5 file, this explicitly opts into 16 readers for one DataLoader
+worker; set `shuffle=False` to retain sequential streaming reuse:
+
+```python
+from contextlib import closing
+from hipfalcons import ERA5Loader
+
+with ERA5Loader(
+    "weather-falcons.h5", dataset="fields",
+    library_path="build/libhipfalcons_loader.so",
+    device="cuda:0", route="dcu_stream", num_workers=1, reader_processes=16,
+    batch_size=1, history=1, future=1, channels=[0, 1], shuffle=True,
+) as loader:
+    with closing(iter(loader)) as batches:
+        history, target = next(batches)
+```
+
+The loader's parent creates the reader groups before HIP initialization;
+each DataLoader worker has its own group, for `num_workers * reader_processes`
+additional CPU processes. Each reader opens its own HDF5 handle; handles are
+not shared across processes. The configured count is not necessarily the
+number active in a batch: a batch with fewer chunks can use fewer readers.
+The readers do not create GPU contexts. Keep the file stable and start the
+loader before initializing HIP or opening an HDF5 handle in the training
+process. Extra processes can increase startup, CPU scheduling, storage
+contention and memory costs; more readers do not necessarily improve
+throughput. Test the actual file, channel count and batch size within the
+job's CPU allocation.
+
+`shared_pool_bytes` defaults to 64 MiB per loader and controls only the
+reusable IPC pool for **inline**, sequential `dcu_stream` packing
+(`reader_processes=0`, `shuffle=False`). Too-large or busy pool slots fall
+back to per-batch shared memory. Set it to `0` to disable this pool without
+disabling frame reuse. With `reader_processes>0`, packing instead uses
+independent shared output slabs; it does not use those reusable pool slots,
+and `shared_pool_bytes` does not limit their size or total RAM. Prefetch and
+multiple workers can increase the number of live slabs.
+
+One input/target pair with all 257 ERA5 channels at `721 x 1440` occupies
+roughly 2 GiB **just for the returned tensors**, not counting processes,
+shared output slabs, pinned buffers, reuse buffers, the model or gradients.
+Start with a subset of channels and check host, device and `/dev/shm` usage.
 
 ## Compare routes on an existing file
 
 ```bash
 HIP_VISIBLE_DEVICES=0 python -m hipfalcons.calibrate era5-falcons.h5 \
     --library build/libhipfalcons_loader.so --history 1 --future 1 \
-    --batch-size 1 --num-workers 4 --channels 0 1 2 3 \
-    --baseline cpu_stream --candidate dcu_stream --batches 8 --windows 3 --report route.json
+    --batch-size 1 --num-workers 1 --channels 0 1 2 3 \
+    --baseline cpu_stream --candidate dcu_stream --reader-processes 16 \
+    --batches 8 --windows 3 --report route.json
 ```
 
 Use the report's `winner` as `route` when the training batch layout and
-worker count match the calibration. The utility checks representative
-batches; it cannot guarantee that untested chunks use a supported mode.
+worker and reader-process counts match the calibration. `--reader-processes`
+defaults to `0` and applies only to `dcu` and `dcu_stream`; CPU and legacy
+GPU routes use `0`. The report records the effective configured count per
+worker for each route, not a count of readers active on every batch. The DCU
+route therefore uses extra CPU processes in this comparison. The utility checks
+representative batches; it cannot guarantee that untested chunks use a
+supported mode.
 The [runnable example](../examples/README.md) shows complete training code,
 including resource cleanup.

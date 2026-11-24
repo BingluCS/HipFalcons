@@ -30,6 +30,8 @@ CPU reconstruction bit for bit. Separately, the 4-worker reader supplied
 device tensors for a Conv2d forward, backward and SGD update. These are
 reader delivery rates, not disk bandwidth or model training rates.
 [Per-window times and verification](../results/bw150-loader-scaling-20261124.json)
+These measurements used the equivalent of `reader_processes=0`; DCU packing
+was performed inline by the DataLoader workers.
 
 To repeat the large-grid test, select physical cores local to the target
 DCU **within the job's CPU allocation**. Set `LOCAL_CPUS` to that list;
@@ -42,6 +44,31 @@ HIP_VISIBLE_DEVICES=0 taskset -c "$LOCAL_CPUS" python -m hipfalcons.bench \
     --shape 721 1440 --batch-size 1 --batches 48 --workers 8 --windows 3 \
     --limit-mib 2048 --gate-prefetch --report bench-local.json
 ```
+
+## One worker with independent readers
+
+On the same four-channel synthetic grid, a separate run held the DCU,
+CPU affinity (cores 0-15), native libraries and DataLoader worker count
+fixed. The inline baseline ran first, before the Python packing helper
+was factored out for readers; the two configurations were not interleaved.
+Each row is the median of three gated, 48-batch runs.
+
+| DataLoader workers | Readers per worker | ms/batch | Samples/s |
+| ---: | ---: | ---: | ---: |
+| 1 | 0 (worker packs inline) | 18.12 | 55.2 |
+| 1 | 16 | 8.84 | 113.2 |
+
+For one worker, parallel chunk preparation raised throughput by **2.05x**.
+All outputs matched the CPU reconstruction bit for bit. At batch size one,
+the first sample contains eight chunks; after that only four new chunks
+enter each batch. The sixteen readers were configured, not all kept busy.
+The 8-worker inline configuration in the previous experiment was faster;
+the best choice depends on both the channel count and the worker budget.
+Separately, a smaller 257-channel file (32 x 64 planes) was used for
+correctness, not throughput: reversed channel order, shuffled subsets,
+early epoch close and restart, and two independent worker groups all
+matched the CPU reference. No readers remained after loader shutdown.
+[Raw windows and measurement settings](../results/bw150-reader-processes-20261124.json)
 
 ## Earlier reader measurements
 
@@ -86,3 +113,12 @@ HIP_VISIBLE_DEVICES=0 python -m hipfalcons.bench \
 With `--gate-prefetch` workers may prepare the warm-up batch, but no timed
 batch starts reading until the timer opens the gate. Worker prefetch then
 operates normally. Omit the flag to measure warm-prefetched delivery instead.
+To evaluate optional CPU readers, replace `--workers 4` with
+`--workers 1 --reader-processes 16` (or choose another nonnegative reader
+count). The count is per DataLoader worker and applies only to `dcu` and
+`dcu_stream`; CPU and legacy GPU routes use zero.
+The output and report record the effective configured count per worker for
+each route; fewer readers may be active when a batch has fewer chunks. The
+DCU route therefore has additional CPU processes relative to the CPU
+baseline. Readers consume additional processes, host memory and shared-memory
+slabs, and the best setting depends on the workload and available resources.

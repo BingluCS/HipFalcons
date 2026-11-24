@@ -1,0 +1,88 @@
+{
+  "device": "1 x BW150 (gfx936)",
+  "build": "Release, AVX2 host",
+  "torch": "2.9.0",
+  "torch_hip": "6.3.26093",
+  "route": "dcu_stream",
+  "fixture": "synthetic float32, serial 2D LINEAR, ABS 1e-3",
+  "shape_tchw": [
+    50,
+    4,
+    721,
+    1440
+  ],
+  "chunks": [
+    1,
+    1,
+    721,
+    1440
+  ],
+  "history": 1,
+  "future": 1,
+  "batch_size": 1,
+  "num_workers": 1,
+  "cpu_affinity": "0-15, parent and children",
+  "comparison_note": "Non-interleaved; the inline baseline ran before the Python pack_planes refactor. Native libraries were identical.",
+  "gated_prefetch": true,
+  "warmup_batches": 1,
+  "timed_batches_per_window": 48,
+  "windows_per_configuration": 3,
+  "timing": "Until synchronized DCU tensors, including a small device sum; excludes startup and model computation",
+  "verified_all_batches_against_cpu": true,
+  "output_sha256": "2e40f3734a866bd718976b0924f1b0bd375a9bdc757f3bae3dd36479f99863f8",
+  "correctness_fixture_tchw": [12, 257, 32, 64],
+  "correctness_after_early_epoch_close": [
+    {
+      "workers": 1,
+      "readers_per_worker": 16,
+      "channels": 257,
+      "shuffle": false,
+      "status": "pass",
+      "bitwise_oracle": true,
+      "live_children_after_close": 0,
+      "second_epoch_count": 11
+    },
+    {
+      "workers": 1,
+      "readers_per_worker": 16,
+      "channels": 38,
+      "shuffle": true,
+      "status": "pass",
+      "bitwise_oracle": true,
+      "live_children_after_close": 0,
+      "second_epoch_count": 11
+    },
+    {
+      "workers": 2,
+      "readers_per_worker": 2,
+      "channels": 38,
+      "shuffle": true,
+      "status": "pass",
+      "bitwise_oracle": true,
+      "live_children_after_close": 0,
+      "second_epoch_count": 11
+    }
+  ],
+  "configs": [
+    {
+      "reader_processes": 0,
+      "ms_per_batch": [
+        17.5017720833542,
+        18.121404604244162,
+        19.037021458340558
+      ],
+      "median_ms_per_batch": 18.121404604244162,
+      "samples_per_s": 55.18336033211205
+    },
+    {
+      "reader_processes": 16,
+      "ms_per_batch": [
+        9.15411508321995,
+        8.835905770865793,
+        8.146602687399232
+      ],
+      "median_ms_per_batch": 8.835905770865793,
+      "samples_per_s": 113.17458854045863
+    }
+  ]
+}

@@ -12,7 +12,8 @@ repeats the same initial sequential window without shuffling: one warmup and
 the requested full timed batches. It times synchronized DataLoader-to-device
 delivery plus a small GPU reduction. No model is timed. The subprocesses set
 OMP_NUM_THREADS, OPENBLAS_NUM_THREADS, MKL_NUM_THREADS and NUMEXPR_NUM_THREADS
-to 1; num-workers controls DataLoader parallelism.
+to 1; num-workers controls DataLoader parallelism. Optional reader processes
+are configured per DataLoader worker for DCU routes only.
 The result is a short, warm-prefetched calibration, not a general performance
 guarantee; cache state, worker count, workload, and shared load matter.
 Optional sampled comparisons retain whole device batches until after timing;
@@ -59,6 +60,8 @@ def parse_args():
     p.add_argument("--baseline", choices=("cpu", "dcu", "cpu_stream"), default="cpu")
     p.add_argument("--candidate", choices=("gpu", "dcu", "dcu_stream"), default="dcu_stream")
     p.add_argument("--num-workers", type=int, default=2)
+    p.add_argument("--reader-processes", type=int, default=0,
+                   help="CPU readers per worker for dcu/dcu_stream (default: 0; other routes use 0)")
     p.add_argument("--device", default="cuda:0", help="PyTorch ROCm/HIP device")
     p.add_argument("--verify-batches", type=int, default=1, help="number of full timed batches to compare (0..3)")
     p.add_argument("--timeout", type=float, default=600, help="seconds per subprocess")
@@ -67,6 +70,8 @@ def parse_args():
     a = p.parse_args()
     if any(x < 1 for x in (a.history, a.future, a.batch_size, a.batches, a.num_workers)):
         p.error("history, future, batch-size, batches and num-workers must be positive")
+    if a.reader_processes < 0:
+        p.error("reader-processes must be nonnegative")
     if not 1 <= a.windows <= 3:
         p.error("windows must be 1..3")
     if a.baseline == a.candidate:
@@ -97,10 +102,12 @@ def measure(a):
     import torch
     from .loader import ERA5Loader
 
+    reader_processes = a.reader_processes if a._child in ("dcu", "dcu_stream") else 0
     loader = ERA5Loader(a.file, library_path=a.library, route=a._child, device=a.device,
                         num_workers=a.num_workers, batch_size=a.batch_size,
                         history=a.history, future=a.future, dataset=a.dataset,
-                        channels=a.channels, shuffle=False, drop_last=True)
+                        channels=a.channels, shuffle=False, drop_last=True,
+                        reader_processes=reader_processes)
     started = time.perf_counter()
     try:
         loader.start()  # Forks all workers before any CUDA/HIP initialization.
@@ -153,7 +160,8 @@ def measure(a):
                   for i, history, future in keep]
         logical_bytes = (a.batches * a.batch_size * (a.history + a.future)
                          * len(channels) * shape[2] * shape[3] * 4)
-        return {"route": a._child, "pid": os.getpid(), "shape": shape, "channels": channels,
+        return {"route": a._child, "reader_processes": reader_processes,
+                "pid": os.getpid(), "shape": shape, "channels": channels,
                 "worker_setup_ms": setup_ms, "first_batch_ms": first_ms,
                 "elapsed_ms": seconds * 1000, "ms_per_batch": seconds * 1000 / a.batches,
                 "first_plus_steady_ms_per_batch": (first_ms + seconds * 1000) / (a.batches + 1),
@@ -169,6 +177,7 @@ def run_route(a, route):
            "--dataset", a.dataset, "--history", str(a.history), "--future", str(a.future),
            "--batch-size", str(a.batch_size), "--batches", str(a.batches),
            "--num-workers", str(a.num_workers), "--device", a.device,
+           "--reader-processes", str(a.reader_processes),
            "--verify-batches", str(a.verify_batches), "--baseline", a.baseline,
            "--candidate", a.candidate, "--_child", route]
     if a.channels is not None:
@@ -204,6 +213,9 @@ def run_route(a, route):
     result = json.loads(lines[0])
     if result.get("route") != route:
         raise RuntimeError("subprocess returned an unexpected route")
+    effective_readers = a.reader_processes if route in ("dcu", "dcu_stream") else 0
+    if result.get("reader_processes") != effective_readers:
+        raise RuntimeError("subprocess returned the wrong reader process count")
     extra = "\n".join(line for line in out.splitlines() if line and not line.startswith(MARKER))
     if extra or err.strip():
         print(f"{route} subprocess output:\n{extra}\n{err.strip()}", file=sys.stderr)
@@ -240,8 +252,8 @@ def main():
         except Exception as exc:
             message = str(exc)
             known_rejection = ((a._child == "gpu" and message.startswith("Falcons decoder failed")) or
-                               (a._child == "dcu" and "hf_pack_plane failed" in message) or
-                               (a._child == "dcu_stream" and "hf_pack_batch failed" in message))
+                               (a._child in ("dcu", "dcu_stream") and
+                                any(name in message for name in ("hf_pack_plane failed", "hf_pack_batch failed"))))
             if known_rejection and any(s in message for s in INCOMPATIBLE):
                 print(message, file=sys.stderr)
                 sys.exit(3)
@@ -291,6 +303,10 @@ def main():
               "file": a.file, "dataset": a.dataset, "library": a.library,
               "history": a.history, "future": a.future, "batch_size": a.batch_size, "batches": a.batches,
               "windows": a.windows, "num_workers": a.num_workers, "device": a.device,
+              "requested_reader_processes": a.reader_processes,
+              "reader_processes_by_route": {
+                  route: a.reader_processes if route in ("dcu", "dcu_stream") else 0
+                  for route in measurements},
               "verify_batches": a.verify_batches, "measurements": measurements}
     if a.report:
         save_report(a.report, result)

@@ -20,13 +20,17 @@ def _native(path):
 
 
 def pack_times(dataset, ordered_times, channels, height, width, library_path, *, destination=None):
+    planes = ((time, channel) for time in ordered_times for channel in channels)
+    return pack_planes(dataset, planes, height, width, library_path, destination=destination)
+
+
+def pack_planes(dataset, planes, height, width, library_path, *, destination=None):
     chunks = []
-    for time in ordered_times:
-        for channel in channels:
-            mask, chunk = dataset.id.read_direct_chunk((time, channel, 0, 0))
-            if mask or not chunk:
-                raise ValueError(f"Missing or unfiltered Falcons chunk at ({time}, {channel})")
-            chunks.append(chunk)
+    for time, channel in planes:
+        mask, chunk = dataset.id.read_direct_chunk((time, channel, 0, 0))
+        if mask or not chunk:
+            raise ValueError(f"Missing or unfiltered Falcons chunk at ({time}, {channel})")
+        chunks.append(chunk)
     n = len(chunks)
     if not n:
         raise ValueError("cannot pack an empty set of planes")

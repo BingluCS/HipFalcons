@@ -42,29 +42,40 @@ For a prepared file:
 ```bash
 python examples/dcu_dataloader.py --input /data/era5_falcons.h5 \
   --dataset fields --library /path/to/build/libhipfalcons_loader.so \
-  --route dcu_stream --num-workers 2 --batch-size 1 --channels 0 5 9 \
+  --route dcu_stream --num-workers 1 --reader-processes 16 --batch-size 1 --channels 0 5 9 \
   --epochs 2 --steps 10
 ```
 
-`--route` selects either `cpu_stream` (CPU decode, then transfer) or
-`dcu_stream` (CPU unpacking, then DCU reconstruction). Both return batches
+`--route` selects `cpu_stream` (CPU decode, then transfer), or `dcu` /
+`dcu_stream` (CPU unpacking, then DCU reconstruction). All return batches
 on the DCU and use one route for all workers in a run. Use a separate process
 to compare routes; do not mix CPU and DCU worker pools in this example.
 `--device` defaults to `cuda:0`. `--channels` selects unique zero-based source
 indices in the specified order; omitted means all channels. `--steps` is a
 maximum per epoch, so a shorter file ends the epoch earlier and its last batch
-may be partial. The sequential example uses one history frame and one future
-frame, with windows starting at consecutive time indices.
+may be partial. By default, the example uses one history frame and one future
+frame, with windows starting at consecutive time indices. `--shuffle` shuffles
+window starts and disables sequential frame reuse; it also works with reader
+processes on either DCU route.
+
+`--reader-processes` defaults to `0` and applies per DataLoader worker on
+`dcu` and `dcu_stream`. The command above uses one worker and 16 additional
+CPU readers for a single file. For `cpu_stream`, the example uses and prints
+an effective count of `0` even if the option is supplied. Reader groups are
+started by the loader's parent before HIP initialization; readers open their
+own HDF5 handles and do not create GPU contexts. More readers can increase
+startup, CPU and storage contention, host memory and `/dev/shm` use; measure
+the target workload rather than assuming a speedup.
 
 ## Input and encoding
 
 The named dataset must be native-endian float32 `[T, C, H, W]`, with `T >= 2`,
 chunks exactly `(1, 1, H, W)`, and exactly one filter: Falcons, ID `40024`.
 Every requested chunk must exist and have the filter applied, not skipped.
-For `dcu_stream`, each chunk must contain a serial, effectively 2D float32
-Falcons interpolation stream using LINEAR interpolation and quantizer radius
-32768; OpenMP, cubic or lossless-fallback streams are not supported by this
-route, and automatic tuning can produce incompatible streams. `cpu_stream`
+For `dcu` and `dcu_stream`, each chunk must contain a serial, effectively 2D
+float32 Falcons interpolation stream using LINEAR interpolation and quantizer
+radius 32768; OpenMP, cubic or lossless-fallback streams are not supported by
+these routes, and automatic tuning can produce incompatible streams. `cpu_stream`
 uses the native CPU decoder and can handle other formats that decoder
 supports, while still requiring the same HDF5 layout.
 There is no automatic DCU-to-CPU fallback for an unsupported chunk.
@@ -112,10 +123,12 @@ CPU decoder supports its streams, or re-encode.
 
 The example calls `loader.start()` before checking HIP availability, creating
 the model, or allocating any device tensor. `start()` probes metadata in a
-child and starts persistent Linux fork workers; each worker opens its own HDF5
-handle. Do not initialize HIP or open an HDF5 handle in the training parent
-before starting workers. Keep the loader alive across epochs, close an
-abandoned iterator before creating the next one, and always close the loader.
+child and starts persistent Linux fork workers and any requested reader
+processes. With inline packing each worker opens its own HDF5 handle; with
+reader processes, each reader opens its own handle. Do not initialize HIP or
+open an HDF5 handle in the training parent before starting workers. Keep the
+loader alive across epochs, close an abandoned iterator before creating the
+next one, and always close the loader.
 The example does both in `finally` blocks, including on an exception.
 
 Each returned pair consists of device float32 views shaped
@@ -132,3 +145,7 @@ is about 2.13 GB (1.99 GiB) of float32 output. Model activations, gradients,
 the streaming tail, worker prefetch, pinned memory and shared IPC require
 additional space. Select only needed channels and size DCU, host and shared
 memory for the actual batch and worker count, not the compressed file size.
+`shared_pool_bytes` only controls reusable slots for inline sequential
+`dcu_stream` packing. With `reader_processes>0`, independent shared output
+slabs are used instead, and that setting does not limit slab memory or total
+RAM.

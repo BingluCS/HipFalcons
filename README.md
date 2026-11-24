@@ -92,6 +92,22 @@ the workers fork before HIP initialization. See the
 [Python guide](docs/dataloader.md#python-api) for shapes and arguments,
 and the [training example](examples/README.md) for a complete loop.
 
+To opt into parallel CPU chunk reading and entropy decoding for a single
+existing file, for example:
+
+```bash
+HIP_VISIBLE_DEVICES=0 python examples/dcu_dataloader.py --input fields.h5 \
+    --library build/libhipfalcons_loader.so --route dcu_stream \
+    --num-workers 1 --reader-processes 16
+```
+
+`--reader-processes` defaults to zero. A positive value adds that many CPU
+reader processes **per DataLoader worker**, also with `--shuffle`. Readers
+use their own HDF5 handles and do not create GPU contexts. This can increase
+CPU, host-memory and `/dev/shm` use; measure the workload and size resources
+accordingly. See [reader process tuning](docs/dataloader.md#reader-processes)
+for lifecycle and memory details.
+
 ## Supported Streams
 
 | Entry point | Input | Output |

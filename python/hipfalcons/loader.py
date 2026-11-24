@@ -14,7 +14,7 @@ streams in workers, then pins and transfers each batch in the parent. The GPU
 route reads compressed chunks in workers and decodes them directly into a
 parent-owned device tensor. The native GPU decoder supports only its own
 documented subset (serial float32 LINEAR); errors never fall back to CPU.
-The DCU route packs each unique plane in the workers into one shared byte slab,
+The DCU route packs each unique plane in the workers or their CPU reader groups into a shared byte slab,
 then asynchronously uploads and launches the packed reconstruction on the
 current PyTorch stream. ``library_path`` names the GPU library; CPU decoding
 and DCU packing use the CPU-only sibling ``libfalcons_loader_cpu.so`` inside
@@ -400,7 +400,7 @@ class _SlidingBatchSampler:
 
 
 class _ChunkBatches(Dataset):
-    def __init__(self, path, name, shape, channels, frames, route, library_path, pool=None):
+    def __init__(self, path, name, shape, channels, frames, route, library_path, pool=None, readers=None):
         self.path = path
         self.name = name
         self.shape = shape
@@ -409,6 +409,7 @@ class _ChunkBatches(Dataset):
         self.route = route
         self.library_path = library_path
         self._pool = pool
+        self._readers = readers
         self._handle = None
         self._dataset = None
         self._pid = None
@@ -434,7 +435,7 @@ class _ChunkBatches(Dataset):
                 not self._pool.is_current(indices[3])):
             starts, times, first, generation = indices
             return tuple(starts), first, len(times), (_IPC_CANCELLED,), generation
-        dataset = self._get_dataset()
+        dataset = self._get_dataset() if self._readers is None else None
         channels = len(self.channels)
         height, width = self.shape[2:]
         if self.route in ("cpu_stream", "dcu_stream"):
@@ -503,12 +504,12 @@ class _ChunkBatches(Dataset):
         if tuple(times) != tuple(range(start, indices[-1] + self.frames)):
             raise ValueError("Invalid entering times for sequential ERA5 batch")
         if self.route == "dcu_stream":
-            if __package__:
-                from .fastpack import pack_times
+            if self._readers is not None:
+                payload = self._readers.pack(times, self.channels)
             else:
                 from .fastpack import pack_times
-            payload = self._pack_stream_times(pack_times, dataset, indices[0], times,
-                                              height, width, generation)
+                payload = self._pack_stream_times(pack_times, dataset, indices[0], times,
+                                                  height, width, generation)
         else:
             if self._codec is None:
                 self._codec = _Codec(self.library_path, "cpu")
@@ -572,6 +573,13 @@ class _ChunkBatches(Dataset):
                 pool.finish_write(slot, generation, task, False)
 
     def _packed_batch(self, dataset, indices, height, width):
+        if self._readers is not None:
+            if any(index < 0 or index >= len(self) for index in indices):
+                raise IndexError("ERA5 window index out of range")
+            times = [t for index in indices for t in range(index, index + self.frames)]
+            positions = {time: i for i, time in enumerate(dict.fromkeys(times))}
+            slab, offsets, groups = self._readers.pack(tuple(positions), self.channels)
+            return len(indices), slab, offsets, [positions[t] for t in times], groups
         if self._codec is None:
             self._codec = _PackedCodec(self.library_path)
         packed = []
@@ -691,8 +699,11 @@ class ERA5Loader:
     ``library_path`` names the HIP library and CPU workers load its
     ``libfalcons_loader_cpu.so`` sibling. ``device`` is a PyTorch
     CUDA-namespace device such as ``'cuda:0'`` on ROCm; ``num_workers`` must be
-    positive. ``shared_pool_bytes`` bounds the sequential ``dcu_stream`` IPC
-    pool; zero disables it. ``channels`` is an optional sequence of unique source-channel
+    positive. On ``dcu`` and ``dcu_stream``, ``reader_processes`` adds this many
+    CPU chunk readers per worker; the default (0) packs in the worker itself.
+    ``shared_pool_bytes`` bounds the reusable sequential ``dcu_stream`` IPC
+    pool for inline packing; independent reader groups use per-batch shared
+    slabs. ``channels`` is an optional sequence of unique source-channel
     indices, in output order. ``mean`` and ``std`` are either both absent or
     CPU scalars/per-selected-channel values in that order. Normalization is
     in-place on the GPU. ``shuffle`` shuffles window starts, not frames
@@ -709,9 +720,13 @@ class ERA5Loader:
     def __init__(self, path, *, library_path, route, device, num_workers,
                  batch_size, history, future, dataset="fields", mean=None,
                  std=None, shuffle=False, drop_last=False, channels=None,
-                 shared_pool_bytes=64 * 1024 * 1024):
+                 shared_pool_bytes=64 * 1024 * 1024, reader_processes=0):
         if route not in ("cpu", "gpu", "dcu", "cpu_stream", "dcu_stream"):
             raise ValueError("route must be 'cpu', 'gpu', 'dcu', 'cpu_stream' or 'dcu_stream'")
+        if not isinstance(reader_processes, int) or isinstance(reader_processes, bool) or reader_processes < 0:
+            raise ValueError("reader_processes must be a nonnegative integer")
+        if reader_processes and route not in ("dcu", "dcu_stream"):
+            raise ValueError("reader_processes requires route='dcu' or 'dcu_stream'")
         for name, value in (("num_workers", num_workers), ("batch_size", batch_size),
                             ("history", history), ("future", future)):
             if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
@@ -745,6 +760,7 @@ class ERA5Loader:
             raise ValueError("device must be a PyTorch CUDA/ROCm device")
         self.route = route
         self.num_workers = num_workers
+        self.reader_processes = reader_processes
         self.batch_size = batch_size
         self.history = history
         self.future = future
@@ -766,6 +782,7 @@ class ERA5Loader:
         self._codec = None
         self._normalization = None
         self._pool = None
+        self._readers = None
         self._pool_generation = 1
         self._stream_sampler = None
         self._closed = False
@@ -796,11 +813,16 @@ class ERA5Loader:
         if self.shuffle and worker_route in ("cpu_stream", "dcu_stream"):
             worker_route = "cpu" if worker_route == "cpu_stream" else "dcu"
         pool = None
-        if self._streaming and worker_route == "dcu_stream" and self.shared_pool_bytes:
+        readers = None
+        if self.reader_processes:
+            from .readers import ReaderPool
+            readers = ReaderPool(context, self.path, self.dataset, shape, self.cpu_library_path,
+                                 self.num_workers, self.reader_processes)
+        elif self._streaming and worker_route == "dcu_stream" and self.shared_pool_bytes:
             pool = _SharedBatchPool.create(context, self.shared_pool_bytes, self.num_workers,
                                            self.batch_size, len(channels), shape[2], shape[3])
         samples = _ChunkBatches(self.path, self.dataset, shape, channels, self.frames,
-                                worker_route, self.cpu_library_path, pool)
+                                worker_route, self.cpu_library_path, pool, readers)
         sampler = RandomSampler(samples) if self.shuffle else SequentialSampler(samples)
         batches = BatchSampler(sampler, self.batch_size, self.drop_last)
         if self._streaming:
@@ -812,15 +834,22 @@ class ERA5Loader:
         if torch.cuda.is_initialized():
             raise RuntimeError("CUDA/DCU initialized before the workers were started")
         try:
+            if readers is not None:
+                readers.start()
             iterator = iter(loader)
         except BaseException:
             iterator = getattr(loader, "_iterator", None)
-            if iterator is not None:
-                iterator._shutdown_workers()
+            try:
+                if iterator is not None:
+                    iterator._shutdown_workers()
+            finally:
+                if readers is not None:
+                    readers.close()
             raise
         self.shape, self.channels, self.channel_count = shape, channels, len(channels)
         self._loader, self._pending = loader, iterator
         self._pool = pool
+        self._readers = readers
         self._stream_sampler = batches if self._streaming else None
         return self
 
@@ -1113,11 +1142,16 @@ class ERA5Loader:
         self._active = None
         loader, self._loader = self._loader, None
         self._pending = None
-        if loader is not None:
-            iterator = getattr(loader, "_iterator", None)
-            if iterator is not None:
-                iterator._shutdown_workers()
-                loader._iterator = None
+        try:
+            if loader is not None:
+                iterator = getattr(loader, "_iterator", None)
+                if iterator is not None:
+                    iterator._shutdown_workers()
+                    loader._iterator = None
+        finally:
+            if self._readers is not None:
+                self._readers.close()
+                self._readers = None
         self._pool = None
         self._stream_sampler = None
         self._codec = None
