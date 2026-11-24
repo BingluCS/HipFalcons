@@ -26,6 +26,7 @@ import tempfile
 import time
 
 
+from . import _route_readers
 from ._hdf5 import FALCONS_FILTER, FLOAT_PTR, create_fields, encode_plane, native_error, native_libraries
 
 
@@ -50,8 +51,8 @@ def arguments():
     parser.add_argument("--candidate", choices=("gpu", "dcu", "dcu_stream"), default="dcu_stream")
     parser.add_argument("--extra", choices=("cpu_stream",), help="also measure this control route")
     parser.add_argument("--workers", type=int, default=2, help="DataLoader fork workers per route")
-    parser.add_argument("--reader-processes", type=int, default=0,
-                        help="CPU readers per worker for dcu/dcu_stream (default: 0; other routes use 0)")
+    parser.add_argument("--reader-processes", type=int, default=1,
+                        help="total readers per worker including the worker (default: 1; 0 aliases 1; controls use 1)")
     parser.add_argument("--gate-prefetch", action="store_true",
                         help="allow only the warmup batch to be prefetched before timing starts")
     parser.add_argument("--limit-mib", type=int, default=MAX_BYTES // (1024 * 1024),
@@ -225,7 +226,7 @@ def measure(args):
     samples = args.batch_size * (args.batches + 1)
     if oracle.shape != (samples + FRAMES - 1, CHANNELS, h, w) or oracle.dtype != np.dtype("<f4"):
         raise RuntimeError("CPU oracle has an unexpected shape or dtype")
-    reader_processes = args.reader_processes if args._route in ("dcu", "dcu_stream") else 0
+    reader_processes = _route_readers(args._route, args.reader_processes)
     loader = ERA5Loader(args._fixture, library_path=str(Path(args.library).resolve()), route=args._route,
                         device=args.device, num_workers=args.workers, batch_size=args.batch_size,
                         history=HISTORY, future=FUTURE, dataset="fields", mean=None, std=None,
@@ -346,7 +347,7 @@ def run_child(args, route, path, oracle):
     result = subprocess_result(args, route, cmd)
     if result["route"] != route:
         raise RuntimeError("subprocess returned the wrong route")
-    effective_readers = args.reader_processes if route in ("dcu", "dcu_stream") else 0
+    effective_readers = _route_readers(route, args.reader_processes)
     if result.get("reader_processes") != effective_readers:
         raise RuntimeError("subprocess returned the wrong reader process count")
     return result
@@ -437,7 +438,7 @@ def main():
                                "channels": CHANNELS, "workers": args.workers, "timed_batches": args.batches,
                                "requested_reader_processes": args.reader_processes,
                                "reader_processes_by_route": {
-                                   route: args.reader_processes if route in ("dcu", "dcu_stream") else 0
+                                   route: _route_readers(route, args.reader_processes)
                                    for route in routes},
                                "windows": args.windows, "abs_error": args.abs_error, "seed": args.seed,
                                "gate_prefetch": args.gate_prefetch,

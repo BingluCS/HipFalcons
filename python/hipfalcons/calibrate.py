@@ -39,6 +39,8 @@ import tempfile
 import time
 
 
+from . import _route_readers
+
 MARKER = "__ERA5_CALIBRATION__="
 INCOMPATIBLE = (
     "requires a serial 1D/2D/3D float32 Falcons interpolation stream",
@@ -60,8 +62,8 @@ def parse_args():
     p.add_argument("--baseline", choices=("cpu", "dcu", "cpu_stream"), default="cpu")
     p.add_argument("--candidate", choices=("gpu", "dcu", "dcu_stream"), default="dcu_stream")
     p.add_argument("--num-workers", type=int, default=2)
-    p.add_argument("--reader-processes", type=int, default=0,
-                   help="CPU readers per worker for dcu/dcu_stream (default: 0; other routes use 0)")
+    p.add_argument("--reader-processes", type=int, default=1,
+                   help="total readers per worker including the worker (default: 1; 0 aliases 1; controls use 1)")
     p.add_argument("--device", default="cuda:0", help="PyTorch ROCm/HIP device")
     p.add_argument("--verify-batches", type=int, default=1, help="number of full timed batches to compare (0..3)")
     p.add_argument("--timeout", type=float, default=600, help="seconds per subprocess")
@@ -102,7 +104,7 @@ def measure(a):
     import torch
     from .loader import ERA5Loader
 
-    reader_processes = a.reader_processes if a._child in ("dcu", "dcu_stream") else 0
+    reader_processes = _route_readers(a._child, a.reader_processes)
     loader = ERA5Loader(a.file, library_path=a.library, route=a._child, device=a.device,
                         num_workers=a.num_workers, batch_size=a.batch_size,
                         history=a.history, future=a.future, dataset=a.dataset,
@@ -213,7 +215,7 @@ def run_route(a, route):
     result = json.loads(lines[0])
     if result.get("route") != route:
         raise RuntimeError("subprocess returned an unexpected route")
-    effective_readers = a.reader_processes if route in ("dcu", "dcu_stream") else 0
+    effective_readers = _route_readers(route, a.reader_processes)
     if result.get("reader_processes") != effective_readers:
         raise RuntimeError("subprocess returned the wrong reader process count")
     extra = "\n".join(line for line in out.splitlines() if line and not line.startswith(MARKER))
@@ -305,7 +307,7 @@ def main():
               "windows": a.windows, "num_workers": a.num_workers, "device": a.device,
               "requested_reader_processes": a.reader_processes,
               "reader_processes_by_route": {
-                  route: a.reader_processes if route in ("dcu", "dcu_stream") else 0
+                  route: _route_readers(route, a.reader_processes)
                   for route in measurements},
               "verify_batches": a.verify_batches, "measurements": measurements}
     if a.report:

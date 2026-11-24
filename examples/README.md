@@ -35,7 +35,9 @@ creates one more full batch than `--steps` so that the example exercises
 closing an early-stopped iterator. The builder limits the uncompressed
 fixture and its calculated retained outputs to 128 MiB each; demo batch size
 must be at most 16 and steps at most 4096. The demo requires a little-endian
-host.
+host. By default the two DCU DataLoader workers each read and pack inline,
+with no extra reader processes. `--reader-processes 0` is an alias for this
+default inline mode.
 
 For a prepared file:
 
@@ -58,14 +60,16 @@ frame, with windows starting at consecutive time indices. `--shuffle` shuffles
 window starts and disables sequential frame reuse; it also works with reader
 processes on either DCU route.
 
-`--reader-processes` defaults to `0` and applies per DataLoader worker on
-`dcu` and `dcu_stream`. The command above uses one worker and 16 additional
-CPU readers for a single file. For `cpu_stream`, the example uses and prints
-an effective count of `0` even if the option is supplied. Reader groups are
-started by the loader's parent before HIP initialization; readers open their
-own HDF5 handles and do not create GPU contexts. More readers can increase
-startup, CPU and storage contention, host memory and `/dev/shm` use; measure
-the target workload rather than assuming a speedup.
+`--reader-processes` specifies the total read-and-pack participants per
+DataLoader worker on `dcu` and `dcu_stream`, including the worker itself.
+The default `1` packs inline with no helpers; `0` is an inline alias. For
+`R > 1`, the worker handles a shard and `R-1` helpers handle the rest. The
+command above therefore uses one worker plus 15 helpers for a single file.
+`cpu_stream` remains single-reader without helpers. Helpers are started by
+the loader's parent before HIP initialization; each participating process
+opens its own HDF5 handle, and helpers do not create GPU contexts. More
+participants can increase startup, CPU and storage contention, host memory
+and `/dev/shm` use; measure the target workload rather than assuming a speedup.
 
 ## Input and encoding
 
@@ -123,12 +127,11 @@ CPU decoder supports its streams, or re-encode.
 
 The example calls `loader.start()` before checking HIP availability, creating
 the model, or allocating any device tensor. `start()` probes metadata in a
-child and starts persistent Linux fork workers and any requested reader
-processes. With inline packing each worker opens its own HDF5 handle; with
-reader processes, each reader opens its own handle. Do not initialize HIP or
-open an HDF5 handle in the training parent before starting workers. Keep the
-loader alive across epochs, close an abandoned iterator before creating the
-next one, and always close the loader.
+child and starts persistent Linux fork workers and any requested helper
+processes. Each participating worker or helper opens its own HDF5 handle.
+Do not initialize HIP or open an HDF5 handle in the training parent before
+starting workers. Keep the loader alive across epochs, close an abandoned
+iterator before creating the next one, and always close the loader.
 The example does both in `finally` blocks, including on an exception.
 
 Each returned pair consists of device float32 views shaped
@@ -146,6 +149,6 @@ the streaming tail, worker prefetch, pinned memory and shared IPC require
 additional space. Select only needed channels and size DCU, host and shared
 memory for the actual batch and worker count, not the compressed file size.
 `shared_pool_bytes` only controls reusable slots for inline sequential
-`dcu_stream` packing. With `reader_processes>0`, independent shared output
-slabs are used instead, and that setting does not limit slab memory or total
-RAM.
+`dcu_stream` packing with `reader_processes=1` or its `0` alias. With
+`reader_processes>1`, independent shared output slabs are used instead, and
+that setting does not limit slab memory or total RAM.

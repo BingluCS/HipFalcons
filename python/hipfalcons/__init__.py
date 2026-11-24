@@ -8,6 +8,11 @@ if TYPE_CHECKING:
 __all__ = ["ERA5Loader"]
 
 
+def _route_readers(route, requested):
+    # Paired benchmarks use one inline reader for non-hybrid control routes.
+    return max(1, requested) if route in ("dcu", "dcu_stream") else 1
+
+
 def __getattr__(name):
     if name == "ERA5Loader":
         from .loader import ERA5Loader

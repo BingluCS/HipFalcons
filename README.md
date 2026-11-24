@@ -92,8 +92,7 @@ the workers fork before HIP initialization. See the
 [Python guide](docs/dataloader.md#python-api) for shapes and arguments,
 and the [training example](examples/README.md) for a complete loop.
 
-To opt into parallel CPU chunk reading and entropy decoding for a single
-existing file, for example:
+To use more CPU readers for a single existing file, for example:
 
 ```bash
 HIP_VISIBLE_DEVICES=0 python examples/dcu_dataloader.py --input fields.h5 \
@@ -101,11 +100,16 @@ HIP_VISIBLE_DEVICES=0 python examples/dcu_dataloader.py --input fields.h5 \
     --num-workers 1 --reader-processes 16
 ```
 
-`--reader-processes` defaults to zero. A positive value adds that many CPU
-reader processes **per DataLoader worker**, also with `--shuffle`. Readers
-use their own HDF5 handles and do not create GPU contexts. This can increase
-CPU, host-memory and `/dev/shm` use; measure the workload and size resources
-accordingly. See [reader process tuning](docs/dataloader.md#reader-processes)
+For `dcu` and `dcu_stream`, `reader_processes` counts the **total CPU
+read-and-pack participants per DataLoader worker**, including the worker
+itself and with `--shuffle`. The default `1` packs inline without extra
+processes; `0` remains an alias for inline packing. With `R > 1`, the worker
+handles a shard and `R-1` helper processes handle the rest: the example above
+uses the worker plus 15 helpers. CPU and legacy GPU routes remain
+single-reader without helpers. Each participating process opens its own HDF5
+handle, and helpers do not create GPU contexts. Additional processes can
+increase CPU, host-memory and `/dev/shm` use; measure the workload and size
+resources accordingly. See [reader process tuning](docs/dataloader.md#reader-processes)
 for lifecycle and memory details.
 
 ## Supported Streams

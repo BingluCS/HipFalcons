@@ -1,0 +1,147 @@
+{
+  "machine": "HPDPS-6",
+  "device": "1 x BW150 (gfx936)",
+  "cpu_affinity": "0-15, inherited by main, worker and helpers",
+  "host_build": "Release, AVX2",
+  "torch": "2.9.0",
+  "torch_hip": "6.3.26093",
+  "route": "dcu_stream",
+  "num_workers": 1,
+  "batch_size": 1,
+  "history": 1,
+  "future": 1,
+  "window_order": [
+    1,
+    8,
+    16,
+    8,
+    16,
+    1,
+    16,
+    1,
+    8
+  ],
+  "reader_count_includes_worker": true,
+  "gated_prefetch": true,
+  "warmup_batches_per_window": 1,
+  "endpoint": "Synchronized device history and target tensors with a small reduction. Startup and correctness comparisons are excluded; no training is timed.",
+  "four_channel": {
+    "source": "synthetic serial 2D LINEAR, float32 ABS 1e-3",
+    "shape": [
+      50,
+      4,
+      721,
+      1440
+    ],
+    "timed_batches_per_window": 48,
+    "all_batches_match_cpu_oracle": true,
+    "sha256_verified_output": "2e40f3734a866bd718976b0924f1b0bd375a9bdc757f3bae3dd36479f99863f8",
+    "configs": [
+      {
+        "reader_processes": 1,
+        "additional_helpers": 0,
+        "window_ms_per_batch": [
+          17.193556125069637,
+          18.906298166560493,
+          20.161534291825472
+        ],
+        "median_ms_per_batch": 18.906298166560493,
+        "samples_per_s": 52.89242723193146
+      },
+      {
+        "reader_processes": 8,
+        "additional_helpers": 7,
+        "window_ms_per_batch": [
+          9.068248437567187,
+          8.982384500086482,
+          9.612274166708326
+        ],
+        "median_ms_per_batch": 9.068248437567187,
+        "samples_per_s": 110.27487908880872
+      },
+      {
+        "reader_processes": 16,
+        "additional_helpers": 15,
+        "window_ms_per_batch": [
+          8.969339395965411,
+          10.179970458314832,
+          9.157493562270247
+        ],
+        "median_ms_per_batch": 9.157493562270247,
+        "samples_per_s": 109.20018596792643
+      }
+    ]
+  },
+  "global_257_channel": {
+    "source": "Synthetic replay, not real ERA5 fields. For requested (t,c), copy the stored source chunk ((t + c // 4) % 50, c % 4) into its own physical HDF5 chunk. Source is the same four-channel fixture.",
+    "shape": [
+      10,
+      257,
+      721,
+      1440
+    ],
+    "chunks": [
+      1,
+      1,
+      721,
+      1440
+    ],
+    "hdf5_file_bytes": 1273709929,
+    "timed_batches_per_window": 8,
+    "all_batches_match_cpu_oracle": true,
+    "device_stage": "HIP events around hf_launch_packed on the current stream for all 257 entering planes. Excludes H2D, output assembly and reduction. No per-batch synchronization. Window values are means across 8 steady batches.",
+    "configs": [
+      {
+        "reader_processes": 1,
+        "additional_helpers": 0,
+        "window_ms_per_batch": [
+          1316.2299036248442,
+          1355.22233712436,
+          1297.4412942494382
+        ],
+        "median_ms_per_batch": 1316.2299036248442,
+        "samples_per_s": 0.7597456927897173,
+        "window_mean_dcu_reconstruction_ms": [
+          11.48066508769989,
+          11.482244372367859,
+          11.484482765197754
+        ],
+        "median_window_mean_dcu_reconstruction_ms": 11.482244372367859
+      },
+      {
+        "reader_processes": 8,
+        "additional_helpers": 7,
+        "window_ms_per_batch": [
+          230.76995449991955,
+          235.17948837616132,
+          228.34248312392447
+        ],
+        "median_ms_per_batch": 230.76995449991955,
+        "samples_per_s": 4.333319743321909,
+        "window_mean_dcu_reconstruction_ms": [
+          11.478985071182251,
+          11.47928500175476,
+          11.4828622341156
+        ],
+        "median_window_mean_dcu_reconstruction_ms": 11.47928500175476
+      },
+      {
+        "reader_processes": 16,
+        "additional_helpers": 15,
+        "window_ms_per_batch": [
+          233.39134824891516,
+          233.21491599926958,
+          230.9821551261848
+        ],
+        "median_ms_per_batch": 233.21491599926958,
+        "samples_per_s": 4.287890402358021,
+        "window_mean_dcu_reconstruction_ms": [
+          11.487984657287598,
+          11.484484553337097,
+          11.487283110618591
+        ],
+        "median_window_mean_dcu_reconstruction_ms": 11.487283110618591
+      }
+    ]
+  }
+}

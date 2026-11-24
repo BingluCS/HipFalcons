@@ -33,8 +33,8 @@ def parse_args():
     parser.add_argument("--route", choices=("cpu_stream", "dcu", "dcu_stream"), default="dcu_stream",
                         help="one decode route for all workers (default: dcu_stream)")
     parser.add_argument("--num-workers", type=positive_int, default=2, help="fork workers (default: 2)")
-    parser.add_argument("--reader-processes", type=nonnegative_int, default=0,
-                        help="CPU readers per worker for dcu/dcu_stream (default: 0; cpu_stream uses 0)")
+    parser.add_argument("--reader-processes", type=nonnegative_int, default=1,
+                        help="total CPU readers including the worker (default: 1; 0 aliases 1)")
     parser.add_argument("--batch-size", type=positive_int, default=2, help="windows per batch (default: 2)")
     parser.add_argument("--epochs", type=positive_int, default=2, help="number of epochs (default: 2)")
     parser.add_argument("--steps", type=positive_int, default=4, help="maximum batches per epoch (default: 4)")
@@ -76,14 +76,13 @@ def train(args, path):
     import torch
     from hipfalcons import ERA5Loader
 
-    reader_processes = args.reader_processes if args.route in ("dcu", "dcu_stream") else 0
     loader = ERA5Loader(
         path,
         library_path=args.library,
         route=args.route,
         device=args.device,
         num_workers=args.num_workers,
-        reader_processes=reader_processes,
+        reader_processes=args.reader_processes,
         batch_size=args.batch_size,
         history=1,
         future=1,
@@ -107,7 +106,7 @@ def train(args, path):
         optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
         loss_fn = torch.nn.MSELoss()
         model.train()
-        print(f"route={args.route} reader_processes={reader_processes} shuffle={args.shuffle} "
+        print(f"route={args.route} reader_processes={loader.reader_processes} shuffle={args.shuffle} "
               f"shape={loader.shape} channels={loader.channels} device={device}", flush=True)
 
         for epoch in range(1, args.epochs + 1):

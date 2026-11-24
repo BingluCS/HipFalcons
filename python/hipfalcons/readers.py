@@ -36,7 +36,7 @@ def _reader_main(conn, inherited, shutdown, retired, worker_id, owner_pid,
         other.close()
     handle = None
     try:
-        # Dataset and native library are opened only in the reader process.
+        # Each helper opens its own dataset and native library after fork.
         from .fastpack import _native, pack_planes
         from .loader import _open_dataset
 
@@ -81,7 +81,7 @@ def _reader_main(conn, inherited, shutdown, retired, worker_id, owner_pid,
 
 
 class ReaderPool:
-    """Fixed groups of readers started by the parent before DataLoader forks."""
+    """Parent-started helpers; reader_processes includes the DataLoader worker."""
 
     def __init__(self, context, path, dataset_name, shape, cpu_library,
                  num_workers, reader_processes):
@@ -96,6 +96,8 @@ class ReaderPool:
         self._library = os.fspath(cpu_library)
         self._num_workers = _positive_int("num_workers", num_workers)
         self._reader_processes = _positive_int("reader_processes", reader_processes)
+        if self._reader_processes <= 1:
+            raise ValueError("reader_processes must include a worker and at least one helper")
         self._owner_pid = os.getpid()
         self._shutdown = context.RawValue(ctypes.c_byte, 0)
         self._retired = context.RawArray(ctypes.c_byte, self._num_workers)
@@ -119,7 +121,7 @@ class ReaderPool:
         try:
             connections = []
             for worker_id in range(self._num_workers):
-                for _ in range(self._reader_processes):
+                for _ in range(self._reader_processes - 1):
                     worker_end, reader_end = self._context.Pipe(duplex=True)
                     process = self._context.Process(
                         target=_reader_main,
@@ -193,7 +195,7 @@ class ReaderPool:
             raise RuntimeError("DataLoader worker's reader group is no longer available")
         return self._connections
 
-    def pack(self, times, channels):
+    def pack(self, times, channels, dataset):
         connections = self._worker()
         if self._in_pack:
             raise RuntimeError("concurrent pack calls in one worker are unsupported")
@@ -207,7 +209,7 @@ class ReaderPool:
                 raise IndexError(f"{name} index out of range")
         self._in_pack = True
         try:
-            return self._pack(connections, tuple(map(int, times)), tuple(map(int, channels)))
+            return self._pack(connections, tuple(map(int, times)), tuple(map(int, channels)), dataset)
         except BaseException:
             self._retired[self._worker_id] = 1
             for conn in connections:
@@ -216,23 +218,25 @@ class ReaderPool:
         finally:
             self._in_pack = False
 
-    def _pack(self, connections, times, channels):
+    def _pack(self, connections, times, channels, dataset):
         # This helper creates an already-shared CPU tensor without a full-size copy.
+        from .fastpack import pack_planes
         from .loader import _shared_bytes
 
         count = len(times) * len(channels)
         estimate = 2 * self._shape[2] * self._shape[3] + 16384
         if count > _MAX_SIZE or estimate > _MAX_SIZE:
             raise OverflowError("packed batch exceeds int64 indexing")
-        active = connections[:min(len(connections), count)]
-        quotient, remainder = divmod(count, len(active))
+        participants = min(self._reader_processes, count)
+        active = connections[:participants - 1]
+        quotient, remainder = divmod(count, participants)
         shards, capacity, first = [], 0, 0
-        for i, conn in enumerate(active):
+        for i in range(participants):
             last = first + quotient + (i < remainder)
             size = _align8((last - first) * estimate)
             if capacity > _MAX_SIZE - size:
                 raise OverflowError("packed batch exceeds int64 indexing")
-            shards.append({"conn": conn, "first": first, "last": last,
+            shards.append({"first": first, "last": last,
                            "base": capacity, "capacity": size})
             capacity += size
             first = last
@@ -240,11 +244,36 @@ class ReaderPool:
         self._sequence += 1
         seq = self._sequence
         pending = {}
-        for shard in shards:
-            conn = shard["conn"]
+        for conn, shard in zip(active, shards[1:]):
             conn.send((seq, os.getpid(), slab, shard["base"], shard["capacity"],
                        times, channels, shard["first"], shard["last"]))
-            pending[conn] = (time.monotonic() + _TIMEOUT, shard)
+            pending[conn] = shard
+
+        def record(shard, offsets, groups, used, fallback):
+            if (not isinstance(used, int) or not 0 < used <= _MAX_SIZE or
+                    not isinstance(groups, int) or groups < 0 or
+                    len(offsets) != shard["last"] - shard["first"] or
+                    any(not isinstance(v, int) or v < 0 or v >= used or v % 8 for v in offsets) or
+                    any(a >= b for a, b in zip(offsets, offsets[1:]))):
+                raise RuntimeError("invalid reader packed output")
+            if fallback is None:
+                if used > shard["capacity"]:
+                    raise RuntimeError("reader exceeded its destination")
+            elif (not isinstance(fallback, torch.Tensor) or fallback.device.type != "cpu" or
+                  fallback.dtype != torch.uint8 or not fallback.is_contiguous() or
+                  not fallback.is_shared() or fallback.numel() < used or used <= shard["capacity"]):
+                raise RuntimeError("invalid reader fallback slab")
+            shard.update(offsets=offsets, groups=groups, used=used, fallback=fallback)
+
+        local = shards[0]
+        planes = ((times[i // len(channels)], channels[i % len(channels)])
+                  for i in range(local["first"], local["last"]))
+        fallback, offsets, groups, used = pack_planes(
+            dataset, planes, self._shape[2], self._shape[3], self._library,
+            destination=(slab.data_ptr() + local["base"], local["capacity"]))
+        record(local, offsets, groups, used, fallback)
+
+        pending = {conn: (time.monotonic() + _TIMEOUT, shard) for conn, shard in pending.items()}
         while pending:
             deadlines = {conn: value[0] for conn, value in pending.items()}
             for conn, message in self._receive(deadlines):
@@ -252,20 +281,7 @@ class ReaderPool:
                 if len(message) != 6 or message[:2] != ("packed", seq):
                     raise RuntimeError("invalid reader packing response")
                 _, _, offsets, groups, used, fallback = message
-                if (not isinstance(used, int) or not 0 < used <= _MAX_SIZE or
-                        not isinstance(groups, int) or groups < 0 or
-                        len(offsets) != shard["last"] - shard["first"] or
-                        any(not isinstance(v, int) or v < 0 or v >= used or v % 8 for v in offsets) or
-                        any(a >= b for a, b in zip(offsets, offsets[1:]))):
-                    raise RuntimeError("invalid reader packed output")
-                if fallback is None:
-                    if used > shard["capacity"]:
-                        raise RuntimeError("reader exceeded its destination")
-                elif (not isinstance(fallback, torch.Tensor) or fallback.device.type != "cpu" or
-                      fallback.dtype != torch.uint8 or not fallback.is_contiguous() or
-                      not fallback.is_shared() or fallback.numel() < used or used <= shard["capacity"]):
-                    raise RuntimeError("invalid reader fallback slab")
-                shard.update(offsets=offsets, groups=groups, used=used, fallback=fallback)
+                record(shard, offsets, groups, used, fallback)
 
         if any(shard["fallback"] is not None for shard in shards):
             final_size = 0
