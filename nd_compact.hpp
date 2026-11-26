@@ -53,9 +53,14 @@ struct CompactPlan {
     std::size_t code_count = 0;
 };
 
-// For LINEAR groups only. lane must be less than group.count. code_index is
-// the serial CPU index, which need not be consecutive in reordered groups.
-HIP_FALCONS_COMPACT_HD inline NDOperation compact_operation(
+struct CompactPoint {
+    std::uint32_t out;
+    std::uint32_t code_index;
+    std::uint32_t axis_index;
+};
+
+// code_index addresses the serial CPU stream, even when groups are reordered.
+HIP_FALCONS_COMPACT_HD inline CompactPoint compact_point(
     const CompactGroup& group, std::size_t lane) noexcept {
     // Every extent and valid lane fits uint32, including a UINT32_MAX-point plan.
     std::uint32_t index[3];
@@ -71,10 +76,31 @@ HIP_FALCONS_COMPACT_HD inline NDOperation compact_operation(
         out += index[d] * group.out_stride[d];
         code += index[d] * group.code_stride[d];
     }
+    return {static_cast<std::uint32_t>(out), static_cast<std::uint32_t>(code),
+            index[group.axis_slot]};
+}
 
+// Packed 2D groups are row-major with contiguous codes, including the
+// separately scheduled LINEAR boundary row.
+HIP_FALCONS_COMPACT_HD inline CompactPoint compact_point_2d(
+    const CompactGroup& group, std::uint32_t lane) noexcept {
+    const auto columns = static_cast<std::uint32_t>(group.extent[1]);
+    const auto row = lane / columns;
+    const auto column = lane - row * columns;
+    const auto out = static_cast<std::uint32_t>(group.out_base)
+        + row * static_cast<std::uint32_t>(group.out_stride[0])
+        + column * static_cast<std::uint32_t>(group.out_stride[1]);
+    return {out, static_cast<std::uint32_t>(group.code_base) + lane,
+            group.axis_slot == 0 ? row : column};
+}
+
+// For LINEAR groups only.
+HIP_FALCONS_COMPACT_HD inline NDOperation compact_operation(
+    const CompactGroup& group, const CompactPoint& point) noexcept {
+    const std::uint64_t out = point.out;
     std::uint64_t left = 0, right = 0;
     NDPredictor kind = NDPredictor::zero;
-    const bool last = index[group.axis_slot] + 1 == group.extent[group.axis_slot];
+    const bool last = point.axis_index + 1 == group.extent[group.axis_slot];
     switch (group.mode) {
     case CompactPredictorMode::zero:
         break;
@@ -111,10 +137,15 @@ HIP_FALCONS_COMPACT_HD inline NDOperation compact_operation(
         assert(false && "compact_operation is only defined for LINEAR groups");
         break;
     }
-    return NDOperation{static_cast<std::uint32_t>(out),
+    return NDOperation{point.out,
                        static_cast<std::uint32_t>(left),
                        static_cast<std::uint32_t>(right),
-                       static_cast<std::uint32_t>(code), kind};
+                       point.code_index, kind};
+}
+
+HIP_FALCONS_COMPACT_HD inline NDOperation compact_operation(
+    const CompactGroup& group, std::size_t lane) noexcept {
+    return compact_operation(group, compact_point(group, lane));
 }
 
 // lane must be less than anchors.count; the result addresses the lane-th
@@ -130,6 +161,15 @@ HIP_FALCONS_COMPACT_HD inline std::uint32_t compact_anchor_index(
         out += index * anchors.out_stride[d];
     }
     return static_cast<std::uint32_t>(out);
+}
+
+HIP_FALCONS_COMPACT_HD inline std::uint32_t compact_anchor_index_2d(
+    const CompactAnchors& anchors, std::uint32_t lane) noexcept {
+    const auto columns = static_cast<std::uint32_t>(anchors.extent[1]);
+    const auto row = lane / columns;
+    const auto column = lane - row * columns;
+    return row * static_cast<std::uint32_t>(anchors.out_stride[0])
+         + column * static_cast<std::uint32_t>(anchors.out_stride[1]);
 }
 
 namespace nd_compact_detail {
@@ -262,10 +302,6 @@ private:
     }
 
     void level_groups(std::uint64_t stride, int level, double step) {
-        if (params_.cubic) {
-            cubic_level_groups(stride, level, step);
-            return;
-        }
         Triple spacing{{1, 1, 1}};
         const std::uint64_t twice = 2 * stride;
         for (int p = 1; p < rank_; ++p) spacing[axes_[p]] = twice;
@@ -281,7 +317,10 @@ private:
             const bool gathered = specialized && !fastest;
             const bool skip = gathered && level == 1 && pass == rank_ - 1;
             const std::uint64_t odd_count = n / 2;
-            const bool tail = !fastest && (n % 2 == 0) && n >= 4 && !skip;
+            const bool even = (n % 2 == 0);
+            // CUBIC predicts from even samples only; its last odd sample
+            // never needs a separate dependency group.
+            const bool tail = !params_.cubic && !fastest && even && n >= 4 && !skip;
 
             Triple extents{{1, 1, 1}};
             Triple out_spacing = spacing;
@@ -296,11 +335,13 @@ private:
             Triple code_extents = extents;
             if (tail && gathered) code_extents[axis] = odd_count;
             CompactPredictorMode mode = CompactPredictorMode::midpoint;
-            if (n == 2) mode = CompactPredictorMode::copy;
-            else if (fastest) mode = n % 2 == 0
+            if (params_.cubic) mode = even ? CompactPredictorMode::cubic_even
+                                          : CompactPredictorMode::cubic_odd;
+            else if (n == 2) mode = CompactPredictorMode::copy;
+            else if (fastest) mode = even
                 ? CompactPredictorMode::last_extrapolate_three
                 : CompactPredictorMode::last_extrapolate_bracket;
-            else if (skip && n % 2 == 0) mode = CompactPredictorMode::last_extrapolate_three;
+            else if (skip && even) mode = CompactPredictorMode::last_extrapolate_three;
 
             CompactGroup main = rectangle(extents, code_extents, out_spacing, order,
                                           axis, stride, stride, base, level, pass, step, mode);
@@ -320,32 +361,6 @@ private:
                 plan_.groups.push_back(edge);
                 plan_.code_count += static_cast<std::size_t>(edge.count);
             }
-        }
-    }
-
-    void cubic_level_groups(std::uint64_t stride, int level, double step) {
-        Triple spacing{{1, 1, 1}};
-        const std::uint64_t twice = 2 * stride;
-        spacing[axes_[1]] = twice;
-        for (int pass = 0; pass < 2; ++pass) {
-            const int axis = axes_[pass];
-            if (pass != 0) spacing[axes_[pass - 1]] = stride;
-            const std::uint64_t n = (dims_[axis] - 1) / stride + 1;
-            if (n <= 1) continue;
-
-            Triple out_spacing = spacing;
-            out_spacing[axis] = twice;
-            Triple extents{{1, 1, 1}};
-            for (int d = 0; d < 3; ++d)
-                extents[d] = (dims_[d] - 1) / out_spacing[d] + 1;
-            extents[axis] = n / 2;
-            const std::array<int, 3> order{{0, 1, 2}};
-            const auto mode = (n & 1) ? CompactPredictorMode::cubic_odd
-                                      : CompactPredictorMode::cubic_even;
-            CompactGroup group = rectangle(extents, extents, out_spacing, order,
-                axis, stride, stride, plan_.code_count, level, pass, step, mode);
-            plan_.groups.push_back(group);
-            plan_.code_count += static_cast<std::size_t>(group.count);
         }
     }
 
