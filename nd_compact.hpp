@@ -3,6 +3,8 @@
 
 #include "nd_plan.hpp"
 
+#include <cassert>
+
 #if defined(__HIPCC__) || defined(__CUDACC__) || defined(__CUDA__)
 #define HIP_FALCONS_COMPACT_HD __host__ __device__
 #else
@@ -20,6 +22,8 @@ enum class CompactPredictorMode : std::uint8_t {
     extrapolate_two,
     last_extrapolate_three,
     last_extrapolate_bracket,
+    cubic_odd,
+    cubic_even,
 };
 
 struct CompactGroup {
@@ -49,8 +53,8 @@ struct CompactPlan {
     std::size_t code_count = 0;
 };
 
-// lane must be less than group.count. code_index is the serial CPU index,
-// which need not be consecutive in the reordered main and tail groups.
+// For LINEAR groups only. lane must be less than group.count. code_index is
+// the serial CPU index, which need not be consecutive in reordered groups.
 HIP_FALCONS_COMPACT_HD inline NDOperation compact_operation(
     const CompactGroup& group, std::size_t lane) noexcept {
     // Every extent and valid lane fits uint32, including a UINT32_MAX-point plan.
@@ -102,6 +106,10 @@ HIP_FALCONS_COMPACT_HD inline NDOperation compact_operation(
         left = out - group.delta;
         right = out + group.delta;
         break;
+    case CompactPredictorMode::cubic_odd:
+    case CompactPredictorMode::cubic_even:
+        assert(false && "compact_operation is only defined for LINEAR groups");
+        break;
     }
     return NDOperation{static_cast<std::uint32_t>(out),
                        static_cast<std::uint32_t>(left),
@@ -141,6 +149,8 @@ public:
         const std::size_t rank = params.dimensions.size();
         if (rank != 2 && rank != 3)
             throw std::invalid_argument("Falcons ND planner requires 2D or 3D");
+        if (params.cubic && rank != 2)
+            throw std::invalid_argument("Compact CUBIC planner requires 2D");
         rank_ = static_cast<int>(rank);
         if (params.block_size == 0 ||
             params.block_size > std::numeric_limits<std::uint32_t>::max())
@@ -252,6 +262,10 @@ private:
     }
 
     void level_groups(std::uint64_t stride, int level, double step) {
+        if (params_.cubic) {
+            cubic_level_groups(stride, level, step);
+            return;
+        }
         Triple spacing{{1, 1, 1}};
         const std::uint64_t twice = 2 * stride;
         for (int p = 1; p < rank_; ++p) spacing[axes_[p]] = twice;
@@ -309,6 +323,32 @@ private:
         }
     }
 
+    void cubic_level_groups(std::uint64_t stride, int level, double step) {
+        Triple spacing{{1, 1, 1}};
+        const std::uint64_t twice = 2 * stride;
+        spacing[axes_[1]] = twice;
+        for (int pass = 0; pass < 2; ++pass) {
+            const int axis = axes_[pass];
+            if (pass != 0) spacing[axes_[pass - 1]] = stride;
+            const std::uint64_t n = (dims_[axis] - 1) / stride + 1;
+            if (n <= 1) continue;
+
+            Triple out_spacing = spacing;
+            out_spacing[axis] = twice;
+            Triple extents{{1, 1, 1}};
+            for (int d = 0; d < 3; ++d)
+                extents[d] = (dims_[d] - 1) / out_spacing[d] + 1;
+            extents[axis] = n / 2;
+            const std::array<int, 3> order{{0, 1, 2}};
+            const auto mode = (n & 1) ? CompactPredictorMode::cubic_odd
+                                      : CompactPredictorMode::cubic_even;
+            CompactGroup group = rectangle(extents, extents, out_spacing, order,
+                axis, stride, stride, plan_.code_count, level, pass, step, mode);
+            plan_.groups.push_back(group);
+            plan_.code_count += static_cast<std::size_t>(group.count);
+        }
+    }
+
     const NDPlanParams& params_;
     CompactPlan plan_;
     Triple dims_{{1, 1, 1}};
@@ -324,8 +364,9 @@ private:
 }  // namespace nd_compact_detail
 
 // The compact planner has the same serial float32 LINEAR topology and
-// quantization-step contract as make_nd_plan, restricted to block_size equal
-// to max(dimensions). Each group is a flat, trivially-copyable launch
+// quantization-step contract as make_nd_plan. It also supports serial 2D
+// CUBIC when params.cubic is true. Both require block_size equal to
+// max(dimensions). Each group is a flat, trivially-copyable launch
 // descriptor; execute groups in order with a barrier between them. Memory and
 // construction time are O(rank * log(max dimension)), independent of the
 // number of points. No per-point topology is allocated or transferred.

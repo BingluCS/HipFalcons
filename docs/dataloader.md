@@ -11,9 +11,11 @@
   chunk. For `[1460,257,721,1440]`, use `(1,1,721,1440)`.
 - Use filter ID 40024 only, applied to every requested chunk. For the
   `dcu_stream` or `dcu` route, encode each chunk with the supported CPU
-  Falcons revision using **2D LINEAR interpolation, float32, radius 32768,
-  and OpenMP off**, with an interpolation block size of `max(H, W)`.
-  Set the error bound at compression, not in the loader.
+  Falcons revision using **2D LINEAR or CUBIC interpolation, float32,
+  radius 32768, and OpenMP off**, with a block size of `max(H, W)`.
+  The mode is read from each chunk, so LINEAR and CUBIC can coexist.
+  Set the error bound at compression, not in the loader. The legacy
+  `gpu` route remains LINEAR-only.
 - Reading is via `read_direct_chunk`, so neither a Falcons HDF5 plugin nor
   a custom h5py build is needed to read with HipFalcons. Normal h5py
   indexing of the same file still invokes the HDF5 filter.
@@ -33,7 +35,9 @@ The converter reads and compresses one plane at a time with the CPU-only
 library. It accepts an ordinary float32 HDF5 dataset readable without
 external filter plugins, writes a new `fields` dataset, and never overwrites
 an existing file. This is a serial example, not a high-throughput archive
-builder. It does not copy other datasets or attributes such as timestamps,
+builder. It uses the standard CPU Falcons 2D tuner to select the interpolation
+mode and its parameters per chunk, with OpenMP encoding disabled. It does
+not copy other datasets or attributes such as timestamps,
 coordinates, or normalization statistics. The absolute error is in the
 source variables' units and applies to every channel in this example. The
 converter stops if Falcons picks a lossless-only fallback, rather than
@@ -54,6 +58,16 @@ be more useful than one scalar ABS bound:
 python -m hipfalcons.encode /data/era5-2020-f32.h5 /data/era5-2020-rel.h5 \
     --dataset fields --library build/libfalcons_loader_cpu.so --rel-error 1e-3
 ```
+
+Both ABS and REL use automatic interpolation selection. Rebuild both loader
+libraries; no standalone codec target or change to the HDF5 layout is needed.
+
+On the [17-channel ERA5 subset](performance.md#real-era5), serial CPU
+Falcons tuning at `REL=1e-3` selected CUBIC for 155 of 170 chunks and LINEAR
+for the other 15. All chunks met their per-plane bounds, and the BW150
+with one worker and eight readers returned tensors bit-identical to the CPU
+decoder. This is a compatibility check, not a tuned-versus-fixed throughput
+comparison.
 
 Here `--rel-error 1e-3` selects a separate absolute bound of
 `1e-3 * (plane_max - plane_min)` for each `(time, channel)` plane, with

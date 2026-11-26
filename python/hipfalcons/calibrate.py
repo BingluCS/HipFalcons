@@ -4,8 +4,8 @@
 Requires Linux, ROCm/HIP PyTorch, and the loader's two native libraries. The
 dataset must meet ERA5Loader's constraints: native float32 [T,C,H,W], chunks
 (1,1,H,W), and a single applied Falcons filter (40024). The legacy GPU route
-supports only serial 2D LINEAR streams with the supported metadata; the DCU
-route has its own supported stream constraints.
+supports only serial 2D LINEAR streams; the packed DCU routes also support
+serial 2D CUBIC streams.
 
 Each route/window uses a fresh process and fork workers before GPU init. It
 repeats the same initial sequential window without shuffling: one warmup and
@@ -45,6 +45,7 @@ MARKER = "__ERA5_CALIBRATION__="
 INCOMPATIBLE = (
     "requires a serial 1D/2D/3D float32 Falcons interpolation stream",
     "requires LINEAR interpolation with matching serialized dimensions and block size",
+    "requires LINEAR or 2D CUBIC interpolation",
 )
 
 

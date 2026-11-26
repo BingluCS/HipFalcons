@@ -15,9 +15,11 @@ HDF5 dataset directly; no recompression or replacement of your original reader
 is needed. For an uncompressed float32 dataset, the [HDF5 conversion guide](docs/dataloader.md#convert-an-ordinary-hdf5-file)
 shows how to select a fixed ABS or per-chunk REL bound.
 
-The repository also has a [standalone HIP codec](codec/README.md) for
-CPU-compatible Falcons interpolation compression and decompression. It is a
-separate build target and does not change the HDF5 or Python reader.
+The [standalone HIP codec](codec/README.md), `hipfalcons_codec`, can
+compress and decompress individual Falcons streams with LINEAR or CUBIC
+interpolation. The HDF5 DataLoader also reconstructs LINEAR and CUBIC chunks
+on the DCU, for the serial 2D float32 layout below. It does not require the
+optional standalone codec to be built.
 
 ## Build
 
@@ -40,6 +42,12 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DHIP_ARCH=gfx936 -DENABLE_AVX2=O
 cmake --build build -j4
 build/hipfalcons --self-test
 ```
+
+For the standalone codec, configure with `-DHF_BUILD_HIP_CODEC=ON` in
+addition to the options above, then run
+`cmake --build build --target hipfalcons_codec -j4`. See
+[standalone examples](codec/README.md#build-and-use) for CUBIC encode and
+decode commands.
 
 On DTK 26.04, a HIP compile error such as `'cmath' file not found` can
 mean that `hipcc` did not discover the host GCC installation. With the
@@ -97,6 +105,19 @@ the workers fork before HIP initialization. See the
 [Python guide](docs/dataloader.md#python-api) for shapes and arguments,
 and the [training example](examples/README.md) for a complete loop.
 
+Read an existing compatible CUBIC HDF5 file unchanged with
+`route="dcu_stream"` or `"dcu"`; the loader detects the interpolator
+per chunk. To create a new file with the CPU Falcons encoder:
+
+```bash
+python -m hipfalcons.encode era5-raw.h5 era5-cubic.h5 --dataset fields \
+    --library build/libfalcons_loader_cpu.so --rel-error 1e-3
+```
+
+The standard Falcons 2D tuner chooses LINEAR or CUBIC for each chunk;
+no interpolation flag is needed. Rebuild both loader libraries before
+using this version.
+
 To use more CPU readers for a single existing file, for example:
 
 ```bash
@@ -138,17 +159,24 @@ these subsets. These are not training, cold-disk or full 257-channel results.
 
 ## Supported Streams
 
-| Entry point | Input | Output |
+| Entry point | Supported interpolation streams | Input / output |
 | --- | --- | --- |
-| `build/hipfalcons input.falcons output.f32` | CPU-generated serial float32 LINEAR interpolation, 1D/2D/3D, radius 32768 | Raw float32 file in host storage |
-| `ERA5Loader`, `route="dcu_stream"` or `"dcu"` | Native-endian `float32 [T,C,H,W]`, not fixed to an ERA5 grid. Uses chunks `(1,1,H,W)`, one Falcons filter (40024), and a supported 2D stream in each chunk. | Two tensors `[batch,time,channel,height,width]` already on the DCU |
+| [`build/hipfalcons_codec encode/decode`](codec/README.md) | LINEAR and CUBIC; float32 and float64; 1D through 4D; serial and OpenMP-format substreams | Standalone Falcons streams and raw arrays; decoded output is on the host |
+| `build/hipfalcons input.falcons output.f32` | LINEAR only; float32; 1D through 3D; serial; radius 32768 | Standalone stream to raw float32 file on the host |
+| `ERA5Loader` with `route="dcu_stream"` or `"dcu"` | LINEAR and CUBIC; float32; 2D per chunk; serial; radius 32768 | Native-endian `float32 [T,C,H,W]` HDF5 with chunks `(1,1,H,W)` and filter 40024; returns history and target tensors on the DCU |
 
-The two reader entry points above do not accept cubic, Lorenzo, OpenMP,
-lossless-only or non-float32 streams. An automatically tuned CPU encoder may choose an
-unsupported mode. `route="cpu_stream"` explicitly selects the CPU Falcons
-decoder and uploads float32 tensors; it still requires the specified HDF5
-layout. The HIP path does not silently fall back. This is not a drop-in
-replacement for readers that return additional fields such as timestamps.
+The standalone codec also decodes Falcons 1.1.0 lossless-only streams
+(CPU Zstd in `hybrid`, supported device Zstd frames in `pure`). It does not
+encode lossless-only streams or implement Lorenzo/regression, no-prediction,
+or lossy integer interpolation. OpenMP substreams describe the file layout;
+they are not threads running on the DCU.
+
+The HDF5 DCU routes do not accept OpenMP, Lorenzo or lossless-only chunks.
+An automatically tuned CPU encoder may write an unsupported stream even
+with the right HDF5 layout. For a compatible float32 HDF5 file that the CPU
+Falcons decoder can read, explicitly select `route="cpu_stream"` to decode
+on the CPU and upload the result. The DCU routes do not silently fall back.
+See the [DataLoader input requirements](docs/dataloader.md#input-layout-and-compatibility).
 Use trusted input files.
 
 [Performance and reproducible comparisons](docs/performance.md) ·

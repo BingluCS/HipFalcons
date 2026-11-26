@@ -29,6 +29,7 @@ struct Inputs {
     Reconstruct1DParams params{};
     std::vector<size_t> dims;
     int direction = 0;
+    bool cubic = false;
     std::unique_ptr<int16_t[]> codes;
     size_t code_count = 0;
     std::vector<float> unpredictable;
@@ -94,7 +95,8 @@ private:
 };
 
 inline Inputs unpack_impl(const char* stream, size_t length, UnpackTiming& t,
-                          FastEntropy fast, BatchUnpackWorkspace* workspace) {
+                          FastEntropy fast, BatchUnpackWorkspace* workspace,
+                          bool allow_2d_cubic) {
     Falcons::Config conf;
     Falcons_read_config(conf, stream, length);
     if (conf.dataType != Falcons_FLOAT || conf.N < 1 || conf.N > 3 || conf.cmprAlgo != Falcons::ALGO_INTERP || conf.openmp)
@@ -128,9 +130,13 @@ inline Inputs unpack_impl(const char* stream, size_t length, UnpackTiming& t,
     m.num_elements = conf.num;
     read(m.block_size); read(algo); read(in.direction);
     read(m.anchor_stride); read(m.eb_alpha); read(m.eb_beta);
+    in.cubic = algo == Falcons::INTERP_ALGO_CUBIC;
     if (in.dims != conf.dims || !conf.num || conf.num > UINT32_MAX ||
-        m.block_size != *std::max_element(in.dims.begin(), in.dims.end()) || algo != Falcons::INTERP_ALGO_LINEAR)
-        throw std::invalid_argument("requires LINEAR interpolation with matching serialized dimensions and block size");
+        m.block_size != *std::max_element(in.dims.begin(), in.dims.end()) ||
+        (algo != Falcons::INTERP_ALGO_LINEAR && !(allow_2d_cubic && conf.N == 2 && in.cubic)))
+        throw std::invalid_argument(allow_2d_cubic
+            ? "requires LINEAR or 2D CUBIC interpolation with matching serialized dimensions and block size"
+            : "requires LINEAR interpolation with matching serialized dimensions and block size");
     uchar uid;
     int unpred;
     read(uid); read(m.error_bound); read(m.radius); read(unpred);
@@ -155,12 +161,17 @@ inline Inputs unpack_impl(const char* stream, size_t length, UnpackTiming& t,
 }
 
 inline Inputs unpack(const char* stream, size_t length, UnpackTiming& t, FastEntropy fast = nullptr) {
-    return unpack_impl(stream, length, t, fast, nullptr);
+    return unpack_impl(stream, length, t, fast, nullptr, false);
 }
 
 inline Inputs unpack_batch(const char* stream, size_t length, UnpackTiming& t,
                            FastEntropy fast, BatchUnpackWorkspace& workspace) {
-    return unpack_impl(stream, length, t, fast, &workspace);
+    return unpack_impl(stream, length, t, fast, &workspace, false);
+}
+
+inline Inputs unpack_plane(const char* stream, size_t length, UnpackTiming& t,
+                           FastEntropy fast, BatchUnpackWorkspace* workspace) {
+    return unpack_impl(stream, length, t, fast, workspace, true);
 }
 
 } // namespace hip_falcons

@@ -81,8 +81,8 @@ The named dataset must be native-endian float32 `[T, C, H, W]`, with `T >= 2`,
 chunks exactly `(1, 1, H, W)`, and exactly one filter: Falcons, ID `40024`.
 Every requested chunk must exist and have the filter applied, not skipped.
 For `dcu` and `dcu_stream`, each chunk must contain a serial, effectively 2D
-float32 Falcons interpolation stream using LINEAR interpolation and quantizer
-radius 32768; OpenMP, cubic or lossless-fallback streams are not supported by
+float32 Falcons interpolation stream using LINEAR or CUBIC interpolation and
+quantizer radius 32768. OpenMP and lossless-fallback streams are not supported by
 these routes, and automatic tuning can produce incompatible streams. `cpu_stream`
 uses the native CPU decoder and can handle other formats that decoder
 supports, while still requiring the same HDF5 layout.
@@ -138,10 +138,10 @@ ABS streams. REL conversion rejects non-finite input or ranges and zero bounds
 rather than silently switching to lossless. In contrast, `--abs-error` uses
 the same absolute bound for every plane. Keep the original for validation.
 
-For an encoder under your control, the native
-[`hf_compress_2d_f32`](../dataloader/codec.cpp) helper shows the configuration:
-`ALGO_INTERP`, `INTERP_ALGO_LINEAR`, `EB_ABS`, a positive absolute error
-bound, float32, and `openmp = false`, with the default 65536 quantization bins.
+The converter uses the original Falcons CPU 2D tuner to choose LINEAR or
+CUBIC and its parameters per chunk, with OpenMP encoding disabled. No
+interpolation flag is needed. An encoder under your control can also write
+either serial mode with radius 32768 (65536 quantization bins).
 Compress one contiguous `(H, W)` plane per `(time, channel)`. The included
 [HDF5 converter](../docs/dataloader.md#convert-an-ordinary-hdf5-file)
 does this using the native CPU encoder and `write_direct_chunk`. Run
@@ -150,8 +150,7 @@ units of each value, not a fraction of its range; choose it for the scientific
 variables and verify decoded values against the originals.
 
 For files written by another encoder, do not assume the HDF5 plugin's
-defaults or setting an interpolation field in its ordinary serialized
-options forces LINEAR. Validate
+defaults select a compatible stream. Validate
 the actual stream mode and filter mask of **every requested chunk** before
 relying on `dcu_stream`, and validate reconstruction error against the source.
 A short `--steps` run checks only the chunks it reads. To exercise all times

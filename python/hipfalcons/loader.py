@@ -14,8 +14,9 @@ streams in workers, then pins and transfers each batch in the parent. The GPU
 route reads compressed chunks in workers and decodes them directly into a
 parent-owned device tensor. The native GPU decoder supports only its own
 documented subset (serial float32 LINEAR); errors never fall back to CPU.
-The DCU route packs each unique plane in the workers or their CPU reader groups into a shared byte slab,
-then asynchronously uploads and launches the packed reconstruction on the
+The DCU route packs each unique serial 2D float32 LINEAR or CUBIC plane in
+the workers or their CPU reader groups into a shared byte slab, then
+asynchronously uploads and launches the packed reconstruction on the
 current PyTorch stream. ``library_path`` names the GPU library; CPU decoding
 and DCU packing use the CPU-only sibling ``libfalcons_loader_cpu.so`` inside
 each worker. A benchmark can save its winning ``'cpu'``, ``'gpu'`` or ``'dcu'``

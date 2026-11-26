@@ -88,16 +88,13 @@ PackedPlane prepare_plane(const void* src, std::size_t bytes,
         throw std::invalid_argument("empty packed plane input");
     PackedPlane plane;
     UnpackTiming timing;
-    if (workspace)
-        plane.input = unpack_batch(static_cast<const char*>(src), bytes, timing, fast, *workspace);
-    else
-        plane.input = unpack(static_cast<const char*>(src), bytes, timing, fast);
+    plane.input = unpack_plane(static_cast<const char*>(src), bytes, timing, fast, workspace);
     const auto& in = plane.input;
     if (in.dims.size() != 2 || in.dims[0] != h || in.dims[1] != w)
         throw std::invalid_argument("Falcons stream dimensions differ from HDF5 plane");
     const auto& p = in.params;
     plane.plan = make_compact_plan({in.dims, p.block_size, p.anchor_stride, in.direction,
-                                    p.error_bound, p.eb_alpha, p.eb_beta});
+                                    p.error_bound, p.eb_alpha, p.eb_beta, in.cubic});
     const auto& plan = plane.plan;
     if (in.code_count != plan.code_count || in.unpredictable.size() < plan.anchors.count ||
         (in.code_count != 0 && !in.codes))
@@ -266,18 +263,20 @@ extern "C" int hf_gpu_f32(const void* src, size_t bytes, float* output, size_t n
 }
 #endif
 
-// Fixture/packing helper. A chunk is an ordinary serial CPU Falcons stream.
-extern "C" int hf_compress_2d_f32(const float* input, size_t h, size_t w,
-                                  double abs_error, void** out, size_t* bytes) {
+// A chunk is an ordinary serial CPU Falcons stream.
+extern "C" int hf_compress_2d_f32_interp(const float* input, size_t h, size_t w,
+                                         double abs_error, int interp, void** out, size_t* bytes) {
     return checked([&] {
         if (!input || !out || !bytes || h < 2 || w < 2 ||
-            w > std::numeric_limits<uint32_t>::max() / h || !std::isfinite(abs_error) || abs_error <= 0)
+            w > std::numeric_limits<uint32_t>::max() / h || !std::isfinite(abs_error) || abs_error <= 0 ||
+            (interp != -1 && interp != Falcons::INTERP_ALGO_LINEAR && interp != Falcons::INTERP_ALGO_CUBIC))
             throw std::invalid_argument("invalid plane or error bound");
         *out = nullptr;
         *bytes = 0;
         Falcons::Config conf(h, w);
-        conf.cmprAlgo = Falcons::ALGO_INTERP;
-        conf.interpAlgo = Falcons::INTERP_ALGO_LINEAR;
+        // For 2D, the normal Falcons tuner selects interpolation only (no Lorenzo).
+        conf.cmprAlgo = interp == -1 ? Falcons::ALGO_INTERP_LORENZO : Falcons::ALGO_INTERP;
+        if (interp != -1) conf.interpAlgo = static_cast<uint8_t>(interp);
         conf.errorBoundMode = Falcons::EB_ABS;
         conf.absErrorBound = abs_error;
         conf.dataType = Falcons_FLOAT;
@@ -292,6 +291,11 @@ extern "C" int hf_compress_2d_f32(const float* input, size_t h, size_t w,
         *out = stream.release();
         *bytes = length;
     });
+}
+
+extern "C" int hf_compress_2d_f32(const float* input, size_t h, size_t w,
+                                  double abs_error, void** out, size_t* bytes) {
+    return hf_compress_2d_f32_interp(input, h, w, abs_error, Falcons::INTERP_ALGO_LINEAR, out, bytes);
 }
 
 extern "C" void hf_release(void* data) { delete[] static_cast<char*>(data); }

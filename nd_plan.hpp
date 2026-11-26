@@ -56,6 +56,7 @@ struct NDPlanParams {
     double error_bound = 0;
     double eb_alpha = 0;
     double eb_beta = 0;
+    bool cubic = false;
 };
 
 namespace nd_plan_detail {
@@ -100,6 +101,8 @@ inline std::size_t checked_mul(std::size_t a, std::size_t b) {
 class Builder {
 public:
     explicit Builder(const NDPlanParams& params) : params_(params) {
+        if (params.cubic)
+            throw std::invalid_argument("Expanded Falcons planner supports LINEAR only");
         const std::size_t rank = params.dimensions.size();
         if (rank != 2 && rank != 3)
             throw std::invalid_argument("Falcons ND planner requires 2D or 3D");

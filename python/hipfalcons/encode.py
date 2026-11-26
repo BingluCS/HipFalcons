@@ -1,4 +1,4 @@
-"""Convert a regular float32 HDF5 field to a serial LINEAR Falcons HDF5."""
+"""Convert a regular float32 HDF5 field using serial CPU Falcons auto-tuning."""
 
 import argparse
 import math
@@ -64,10 +64,10 @@ def main():
                 nonlocal min_bound, max_bound
                 plane = np.ascontiguousarray(data[time, channel], dtype=np.float32)
                 if args.rel_error is None:
-                    return encode_plane(encoder, plane, args.abs_error)
+                    return encode_plane(encoder, plane, args.abs_error, interp="auto")
                 bound = _relative_bound(plane, args.rel_error, time, channel)
                 try:
-                    payload = encode_plane(encoder, plane, bound)
+                    payload = encode_plane(encoder, plane, bound, interp="auto")
                 except Exception as error:
                     raise RuntimeError(f"REL chunk (time={time}, channel={channel}, ABS={bound:.17g}) "
                                        f"failed in the DCU-compatible encoder: {error}") from error

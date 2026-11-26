@@ -264,6 +264,74 @@ __host__ __device__ void apply_operation(
                                             static_cast<double>(prediction)));
 }
 
+__host__ __device__ bool is_cubic(CompactPredictorMode mode) noexcept {
+    return mode == CompactPredictorMode::cubic_odd ||
+           mode == CompactPredictorMode::cubic_even;
+}
+
+__host__ __device__ void apply_cubic_lane(
+    const CompactGroup& group, std::size_t lane, const std::int16_t* codes,
+    const float* unpredictable, std::size_t anchor_count,
+    const std::uint32_t* escapes, std::size_t escape_count, float* output) {
+    std::uint32_t index[3];
+    std::uint32_t remaining = static_cast<std::uint32_t>(lane);
+    for (int d = 2; d >= 0; --d) {
+        const auto extent = static_cast<std::uint32_t>(group.extent[d]);
+        index[d] = remaining % extent;
+        remaining /= extent;
+    }
+    std::uint64_t out = group.out_base;
+    std::uint64_t code_index = group.code_base;
+    for (int d = 0; d < 3; ++d) {
+        out += index[d] * group.out_stride[d];
+        code_index += index[d] * group.code_stride[d];
+    }
+    const std::int16_t code = codes[code_index];
+    if (code == kEscape) {
+        output[out] = unpredictable[anchor_count + escape_rank(
+            escapes, escape_count, static_cast<std::uint32_t>(code_index))];
+        return;
+    }
+
+    const std::uint64_t delta = group.delta;
+    const std::uint64_t position = index[group.axis_slot];
+    const std::uint64_t odd_count = group.extent[group.axis_slot];
+    const bool even = group.mode == CompactPredictorMode::cubic_even;
+    float prediction;
+    if (position == 0) {
+        if (even && odd_count == 1) {
+            prediction = output[out - delta];
+        } else if (odd_count == 1 || (even && odd_count == 2)) {
+            volatile float sum = output[out - delta] + output[out + delta];
+            prediction = sum * 0.5f;
+        } else {
+            const float a = output[out - delta];
+            const float b = output[out + delta];
+            const float c = output[out + 3 * delta];
+            const float t = fmaf(6.0f, b, -c);
+            prediction = fmaf(3.0f, a, t) * 0.125f;
+        }
+    } else if (even && position + 1 == odd_count) {
+        volatile float scaled_last = 1.5f * output[out - delta];
+        prediction = fmaf(-0.5f, output[out - 3 * delta], scaled_last);
+    } else if (position + 1 == odd_count ||
+               (even && position + 2 == odd_count)) {
+        const float a = output[out - 3 * delta];
+        const float b = output[out - delta];
+        const float c = output[out + delta];
+        const float t = fmaf(6.0f, b, -a);
+        prediction = fmaf(3.0f, c, t) * 0.125f;
+    } else {
+        volatile float sum = output[out - delta] + output[out + delta];
+        volatile float scaled = sum * 9.0f;
+        volatile float minus_left = scaled - output[out - 3 * delta];
+        volatile float minus_right = minus_left - output[out + 3 * delta];
+        prediction = minus_right * 0.0625f;
+    }
+    output[out] = static_cast<float>(fma(static_cast<double>(code), group.step,
+                                          static_cast<double>(prediction)));
+}
+
 __global__ void initialize_anchors(CompactAnchors anchors,
                                    const float* unpredictable, float* output) {
     const std::size_t first = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
@@ -279,9 +347,14 @@ __global__ void apply_group(CompactGroup group, const std::int16_t* codes,
                             float* output) {
     const std::size_t first = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     const std::size_t increment = static_cast<std::size_t>(blockDim.x) * gridDim.x;
-    for (std::size_t i = first; i < group.count; i += increment) {
-        apply_operation(compact_operation(group, i), group.step, codes, unpredictable, anchor_count,
-                        escapes, escape_count, output);
+    if (is_cubic(group.mode)) {
+        for (std::size_t i = first; i < group.count; i += increment)
+            apply_cubic_lane(group, i, codes, unpredictable, anchor_count,
+                             escapes, escape_count, output);
+    } else {
+        for (std::size_t i = first; i < group.count; i += increment)
+            apply_operation(compact_operation(group, i), group.step, codes, unpredictable,
+                            anchor_count, escapes, escape_count, output);
     }
 }
 
@@ -291,14 +364,20 @@ __device__ const std::uint8_t* packed_plane(const std::uint8_t* bytes,
     return bytes + offsets[plane];
 }
 
+template<bool Cubic>
 __device__ void apply_packed_lane(const std::uint8_t* base, const PackedHeader& header,
                                   const CompactGroup& group, std::size_t lane,
                                   float* output) {
     const auto* codes = reinterpret_cast<const std::int16_t*>(base + header.code_off);
     const auto* unpredictable = reinterpret_cast<const float*>(base + header.unpred_off);
     const auto* escapes = reinterpret_cast<const std::uint32_t*>(base + header.escape_off);
-    apply_operation(compact_operation(group, lane), group.step, codes, unpredictable,
-                    header.anchors.count, escapes, header.escape_count, output);
+    if constexpr (Cubic) {
+        apply_cubic_lane(group, lane, codes, unpredictable, header.anchors.count,
+                         escapes, header.escape_count, output);
+    } else {
+        apply_operation(compact_operation(group, lane), group.step, codes, unpredictable,
+                        header.anchors.count, escapes, header.escape_count, output);
+    }
 }
 
 // A block owns a plane while it executes these dependent groups.
@@ -320,8 +399,12 @@ __global__ void packed_prefix(const std::uint8_t* bytes, const std::int64_t* off
         const std::size_t count = header.group_count < groups ? header.group_count : groups;
         for (std::size_t g = 0; g < count; ++g) {
             const CompactGroup& group = descriptors[g];
-            for (std::size_t i = threadIdx.x; i < group.count; i += blockDim.x) {
-                apply_packed_lane(base, header, group, i, plane_output);
+            if (is_cubic(group.mode)) {
+                for (std::size_t i = threadIdx.x; i < group.count; i += blockDim.x)
+                    apply_packed_lane<true>(base, header, group, i, plane_output);
+            } else {
+                for (std::size_t i = threadIdx.x; i < group.count; i += blockDim.x)
+                    apply_packed_lane<false>(base, header, group, i, plane_output);
             }
             __syncthreads();
         }
@@ -361,9 +444,14 @@ __global__ void packed_group(const std::uint8_t* bytes, const std::int64_t* offs
         const CompactGroup& group = descriptors[group_index];
         float* plane_output = output + plane * elements;
         const std::size_t stride = blocks_per_plane * blockDim.x;
-        for (std::size_t i = tile * blockDim.x + threadIdx.x;
-             i < group.count; i += stride) {
-            apply_packed_lane(base, header, group, i, plane_output);
+        if (is_cubic(group.mode)) {
+            for (std::size_t i = tile * blockDim.x + threadIdx.x;
+                 i < group.count; i += stride)
+                apply_packed_lane<true>(base, header, group, i, plane_output);
+        } else {
+            for (std::size_t i = tile * blockDim.x + threadIdx.x;
+                 i < group.count; i += stride)
+                apply_packed_lane<false>(base, header, group, i, plane_output);
         }
     }
 }

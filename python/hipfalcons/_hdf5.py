@@ -34,15 +34,29 @@ def native_error(lib, operation):
                         (message.decode("utf-8", "replace") if message else "no native error message"))
 
 
-def encode_plane(encoder, plane, abs_error):
+def encode_plane(encoder, plane, abs_error, *, interp="linear"):
     h, w = plane.shape
     output = ctypes.c_void_p()
     size = ctypes.c_size_t()
-    rc = encoder.hf_compress_2d_f32(plane.ctypes.data_as(FLOAT_PTR), h, w, abs_error,
-                                    ctypes.byref(output), ctypes.byref(size))
+    source = plane.ctypes.data_as(FLOAT_PTR)
+    if interp == "linear":
+        operation = "hf_compress_2d_f32"
+        rc = encoder.hf_compress_2d_f32(source, h, w, abs_error, ctypes.byref(output), ctypes.byref(size))
+    elif interp in ("auto", "cubic"):
+        operation = "hf_compress_2d_f32_interp"
+        encode = getattr(encoder, operation, None)
+        if encode is None:
+            raise RuntimeError("automatic or CUBIC encoding requires a rebuilt libfalcons_loader_cpu.so")
+        encode.argtypes = [FLOAT_PTR, ctypes.c_size_t, ctypes.c_size_t, ctypes.c_double, ctypes.c_int,
+                           ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_size_t)]
+        encode.restype = ctypes.c_int
+        rc = encode(source, h, w, abs_error, -1 if interp == "auto" else 1,
+                    ctypes.byref(output), ctypes.byref(size))
+    else:
+        raise ValueError("interp must be auto, linear, or cubic")
     try:
         if rc:
-            raise native_error(encoder, "hf_compress_2d_f32")
+            raise native_error(encoder, operation)
         if not output.value or not size.value:
             raise RuntimeError("compressor returned an empty stream")
         return ctypes.string_at(output, size.value)
